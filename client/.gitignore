@@ -1,0 +1,258 @@
+# Dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+.env.development
+.env.production
+.env.test
+.env.staging
+
+# Next.js build output
+.next/
+out/
+dist/
+build/
+
+# TypeScript
+*.tsbuildinfo
+tsconfig.tsbuildinfo
+
+# Logs
+logs/
+*.log
+log.txt
+access.log
+error.log
+debug.log
+.next/trace
+.next/trace.*
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+*.swp
+*.swo
+*.swn
+
+# IDE files
+.idea/
+.vscode/
+*.iml
+.project
+.classpath
+.settings/
+*.code-workspace
+
+# Testing
+coverage/
+.nyc_output/
+test-results/
+__tests__/
+*.test.js
+*.test.ts
+*.test.tsx
+*.spec.js
+*.spec.ts
+*.spec.tsx
+jest.config.js
+jest.config.ts
+vitest.config.ts
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+
+# Cache
+.cache/
+.eslintcache
+*.tsbuildinfo
+node_modules/.cache/
+.next/cache/
+.vercel/cache/
+
+# Static assets (if generated)
+public/assets/
+public/images/
+public/uploads/
+public/files/
+static/assets/
+static/images/
+.storybook/
+
+# Storybook
+storybook-static/
+
+# Security
+*.pem
+*.key
+*.cert
+*.crt
+*.p12
+*.pfx
+private/
+secrets/
+
+# Backup files
+*.backup
+*.bak
+*.old
+*.orig
+
+# API keys (if any in frontend)
+config/keys.js
+config/keys.json
+config/secrets.js
+*.secret.js
+*.secret.json
+
+# Session/Cookie data
+sessions/
+cookie-data/
+
+# Docker
+docker-compose.override.yml
+docker-compose.dev.yml
+.dockerignore
+Dockerfile.*
+!Dockerfile
+
+# AWS / Cloud
+.aws/
+aws-keys.json
+credentials.json
+
+# GCP / Firebase
+*.firebaserc
+firebase-debug.log
+google-credentials.json
+service-account-key.json
+*.gcp.json
+
+# Vercel
+.vercel/
+vercel.json
+.vercelignore
+!vercel.json.example
+
+# Netlify
+.netlify/
+netlify.toml
+!.netlify.toml.example
+
+# PM2
+.pm2/
+pm2.log
+pm2.pid
+
+# ESLint / Prettier
+.eslintcache
+.prettiercache
+.stylelintcache
+
+# Husky
+.husky/_
+
+# Next.js specific
+.next
+.next/**/*.map
+.next/**/*.js
+!.next/static
+
+# Bundle analyzer
+.next/analyze/
+.next/stats-*.json
+.next/optimize-*.json
+
+# Typescript generated
+*.d.ts
+!*.d.ts
+tsconfig.tsbuildinfo
+
+# Cypress
+cypress/videos/
+cypress/screenshots/
+cypress/downloads/
+
+# Playwright
+test-results/
+playwright-report/
+playwright/.cache/
+
+# Vitest
+__coverage__/
+
+# Turbopack
+.turbo/
+
+# Nx
+.nx/
+
+# Prisma (if used in frontend)
+prisma/*.db
+prisma/*.sqlite
+prisma/migrations/*.sql
+!prisma/migrations/migration_lock.toml
+
+# GraphQL
+.graphql-schema
+generated/
+
+# i18n/locale generated
+locales/**/*.json
+!locales/**/*.json.example
+
+# Service Worker
+sw.js
+sw.*.js
+workbox-*.js
+
+# PWA assets
+public/sw.js
+public/workbox-*.js
+public/manifest.json
+!public/manifest.json.example
+
+# Generated routes
+pages/api/generated/
+app/api/generated/
+
+# SVG icons (if auto-generated)
+public/icons/
+public/svg/
+generated-icons/
+
+# Fonts (if auto-generated)
+public/fonts/
+!public/fonts/*.woff2
+!public/fonts/*.woff
+
+# Analytics
+public/analytics/
+analytics-data/
+
+# Next.js telemetry
+.next/telemetry/
+
+# Dependabot
+.github/dependabot.yml
+!.github/dependabot.yml.example
+
+# Renovate
+renovate.json
+!renovate.json.example
