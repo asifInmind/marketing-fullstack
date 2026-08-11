@@ -8,6 +8,9 @@ import {
   Target,
   Wallet,
   Percent,
+  ShoppingBag,
+  Users,
+  Coins,
 } from 'lucide-react';
 
 const formatCurrency = (amount, currency) => {
@@ -67,43 +70,55 @@ const MetricCard = ({
   const isDouble = secondaryValue !== undefined;
 
   return (
-    <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-5 hover:shadow-md transition-shadow duration-200">
-      <div className="flex items-center justify-between mb-3">
-        <div className={`p-2 rounded-lg ${color}`}>
-          <Icon className="w-4 h-4 text-white" />
-        </div>
-      </div>
+    <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-5 hover:shadow-md transition-shadow duration-200 flex flex-col justify-between min-h-[140px]">
       <div>
+        {/* Top Header: Card Title & Icon */}
+        <div className="flex items-center justify-between mb-4">
+          <span className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
+            {title}
+          </span>
+          <div className={`p-1.5 rounded-lg ${color}`}>
+            <Icon className="w-4 h-4 text-white" />
+          </div>
+        </div>
+
+        {/* Content Section */}
         {isDouble ? (
-          <div className="grid grid-cols-2 gap-2 divide-x divide-slate-100 dark:divide-slate-800">
-            <div>
-              <p className="text-lg font-bold text-slate-900 dark:text-white tracking-tight">
+          <div className="grid grid-cols-2 gap-2 divide-x divide-slate-100 dark:divide-slate-800/80">
+            {/* Left Side: Meta Ads */}
+            <div className="pr-2">
+              <span className="block text-[9px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider mb-1">
+                Meta Ads
+              </span>
+              <p className="text-[14px] font-extrabold text-slate-800 dark:text-slate-100 tracking-tight truncate" title={value}>
                 {typeof value === 'number' ? formatCompactNumber(value) : value}
               </p>
-              <p className="text-[10px] uppercase font-semibold text-slate-400 mt-0.5">{title}</p>
             </div>
+            
+            {/* Right Side: Shopify */}
             <div className="pl-4">
-              <p className="text-lg font-bold text-emerald-600 dark:text-emerald-400 tracking-tight">
+              <span className="block text-[9px] font-bold text-emerald-500 uppercase tracking-wider mb-1 animate-pulse">
+                Shopify
+              </span>
+              <p className="text-[14px] font-extrabold text-emerald-600 dark:text-emerald-400 tracking-tight truncate" title={secondaryValue}>
                 {typeof secondaryValue === 'number' ? formatCompactNumber(secondaryValue) : secondaryValue}
               </p>
-              <p className="text-[10px] uppercase font-semibold text-slate-400 mt-0.5">{secondaryTitle}</p>
             </div>
           </div>
         ) : (
           <div>
-            <p className="text-xl font-bold text-slate-900 dark:text-white tracking-tight">
+            <p className="text-[18px] font-extrabold text-slate-850 dark:text-slate-100 tracking-tight truncate" title={value}>
               {typeof value === 'number' ? formatCompactNumber(value) : value}
             </p>
-            <p className="text-xs uppercase font-semibold text-slate-400 mt-0.5">{title}</p>
           </div>
         )}
-
-        {subtitle && (
-          <p className="text-[10px] font-medium mt-2 text-slate-400 dark:text-slate-500">
-            {subtitle}
-          </p>
-        )}
       </div>
+
+      {subtitle && (
+        <p className="text-[10px] font-medium mt-3 text-slate-400 dark:text-slate-500 border-t border-slate-100 dark:border-slate-800/60 pt-2">
+          {subtitle}
+        </p>
+      )}
     </div>
   );
 };
@@ -112,7 +127,8 @@ export function MetaMetricCards({
   summary,
   loading,
   shopifyConnected = false,
-  shopifySummary
+  shopifySummary,
+  viewMode = 'comparison'
 }) {
   const roasDisplay = summary?.averageROAS && summary.averageROAS > 0
     ? `${summary.averageROAS.toFixed(2)}x`
@@ -126,6 +142,10 @@ export function MetaMetricCards({
     ? `${blendedROAS.toFixed(2)}x`
     : '0.00x';
 
+  const aov = shopifySummary && shopifySummary.totalOrders > 0
+    ? shopifySummary.totalRevenue / shopifySummary.totalOrders
+    : 0;
+
   const getROASSubtitle = (roas) => {
     if (roas === 0) return 'No revenue yet';
     if (roas > 3) return 'Excellent ROI';
@@ -136,31 +156,132 @@ export function MetaMetricCards({
 
   const activeCurrency = shopifyConnected && shopifySummary ? shopifySummary.currency : 'USD';
 
-  const gridClass = shopifyConnected
-    ? "grid grid-cols-1 md:grid-cols-3 gap-4"
-    : "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4";
+  // --- Render Mode 1: Meta Only (or if Shopify not connected) ---
+  if (viewMode === 'meta' || !shopifyConnected) {
+    return (
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <MetricCard
+          title="Ad Spend"
+          value={formatCurrency(summary?.totalSpend || 0, activeCurrency)}
+          icon={DollarSign}
+          color="bg-emerald-500"
+          loading={loading}
+          subtitle="Total marketing budget spent"
+        />
+        <MetricCard
+          title="Ad Clicks"
+          value={summary?.totalClicks || 0}
+          icon={MousePointerClick}
+          color="bg-blue-500"
+          loading={loading}
+          subtitle="Total link traffic generated"
+        />
+        <MetricCard
+          title="Ad Impressions"
+          value={summary?.totalImpressions || 0}
+          icon={Eye}
+          color="bg-purple-500"
+          loading={loading}
+          subtitle="Total ad views on feeds"
+        />
+        <MetricCard
+          title="Ad Conversions"
+          value={summary?.totalConversions || 0}
+          icon={Target}
+          color="bg-amber-500"
+          loading={loading}
+          subtitle="Meta pixel purchases tracked"
+        />
+        <MetricCard
+          title="Ad Revenue"
+          value={formatCurrency(summary?.totalRevenue || 0, activeCurrency)}
+          icon={Wallet}
+          color="bg-indigo-500"
+          loading={loading}
+          subtitle="Meta reported purchase value"
+        />
+        <MetricCard
+          title="Meta ROAS"
+          value={roasDisplay}
+          icon={Percent}
+          color="bg-violet-600"
+          loading={loading}
+          subtitle={getROASSubtitle(summary?.averageROAS || 0)}
+        />
+      </div>
+    );
+  }
 
+  // --- Render Mode 2: Shopify Only ---
+  if (viewMode === 'shopify') {
+    return (
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <MetricCard
+          title="Store Revenue"
+          value={formatCurrency(shopifySummary?.totalRevenue || 0, activeCurrency)}
+          icon={Wallet}
+          color="bg-indigo-500"
+          loading={loading}
+          subtitle="Total sales from all channels"
+        />
+        <MetricCard
+          title="Store Orders"
+          value={shopifySummary?.totalOrders || 0}
+          icon={ShoppingBag}
+          color="bg-emerald-500"
+          loading={loading}
+          subtitle="Total checkout transactions completed"
+        />
+        <MetricCard
+          title="Store Customers"
+          value={shopifySummary?.totalCustomers || 0}
+          icon={Users}
+          color="bg-blue-500"
+          loading={loading}
+          subtitle="Unique purchasing buyers"
+        />
+        <MetricCard
+          title="Average Order Value"
+          value={formatCurrency(aov, activeCurrency)}
+          icon={Coins}
+          color="bg-amber-500"
+          loading={loading}
+          subtitle="Average spend per order (AOV)"
+        />
+        <MetricCard
+          title="Blended ROAS (MER)"
+          value={blendedROASDisplay}
+          icon={Percent}
+          color="bg-violet-600"
+          loading={loading}
+          subtitle="Total Store Sales / Meta Ad Spend"
+        />
+      </div>
+    );
+  }
+
+  // --- Render Mode 3: Comparison (Default) ---
   return (
-    <div className={gridClass}>
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
       <MetricCard
-        title="Meta Spend"
+        title="Spend & Orders"
         value={formatCurrency(summary?.totalSpend || 0, activeCurrency)}
         secondaryTitle="Store Orders"
-        secondaryValue={shopifyConnected ? shopifySummary?.totalOrders : undefined}
+        secondaryValue={shopifySummary?.totalOrders}
         icon={DollarSign}
         color="bg-emerald-500"
         loading={loading}
-        subtitle={shopifyConnected ? 'Ad Spend vs Store Orders' : 'Total Marketing Spend'}
+        subtitle="Meta Spend vs Shopify Orders"
       />
       <MetricCard
-        title="Ad Clicks"
+        title="Traffic & Buyers"
         value={summary?.totalClicks || 0}
         secondaryTitle="Store Customers"
-        secondaryValue={shopifyConnected ? shopifySummary?.totalCustomers : undefined}
+        secondaryValue={shopifySummary?.totalCustomers}
         icon={MousePointerClick}
         color="bg-blue-500"
         loading={loading}
-        subtitle={shopifyConnected ? 'Traffic vs Unique Buyers' : 'Total Ad Clicks'}
+        subtitle="Meta Ad Clicks vs Shopify Buyers"
       />
       <MetricCard
         title="Ad Impressions"
@@ -171,42 +292,34 @@ export function MetaMetricCards({
         subtitle="Marketing Audience Reach"
       />
       <MetricCard
-        title="Ad Conversions"
+        title="Conversions Audit"
         value={summary?.totalConversions || 0}
         secondaryTitle="Store Orders"
-        secondaryValue={shopifyConnected ? shopifySummary?.totalOrders : undefined}
+        secondaryValue={shopifySummary?.totalOrders}
         icon={Target}
         color="bg-amber-500"
         loading={loading}
-        subtitle={shopifyConnected ? 'Attributed vs Actual Orders' : 'Ad purchase conversions'}
+        subtitle="Pixel Conversions vs Shopify Orders"
       />
       <MetricCard
-        title="Ad Revenue"
+        title="Revenue Audit"
         value={formatCurrency(summary?.totalRevenue || 0, activeCurrency)}
         secondaryTitle="Store Revenue"
-        secondaryValue={
-          shopifyConnected && shopifySummary
-            ? formatCurrency(shopifySummary.totalRevenue, shopifySummary.currency)
-            : undefined
-        }
+        secondaryValue={formatCurrency(shopifySummary?.totalRevenue || 0, activeCurrency)}
         icon={Wallet}
         color="bg-indigo-500"
         loading={loading}
-        subtitle={shopifyConnected ? 'Attributed vs Actual Sales' : 'Ad reported conversion value'}
+        subtitle="Attributed Sales vs Store Revenue"
       />
       <MetricCard
-        title="Meta ROAS"
+        title="ROAS Comparison"
         value={roasDisplay}
         secondaryTitle="Blended ROAS (MER)"
-        secondaryValue={shopifyConnected ? blendedROASDisplay : undefined}
+        secondaryValue={blendedROASDisplay}
         icon={Percent}
         color="bg-violet-600"
         loading={loading}
-        subtitle={
-          shopifyConnected
-            ? `Blended ROAS: ${blendedROAS > 1 ? 'Profitable' : 'Below Break-Even'}`
-            : getROASSubtitle(summary?.averageROAS || 0)
-        }
+        subtitle="Pixel ROAS vs Blended ROAS (MER)"
       />
     </div>
   );

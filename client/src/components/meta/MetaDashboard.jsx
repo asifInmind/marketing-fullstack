@@ -81,6 +81,8 @@ export function MetaDashboard({ accessToken, accountId }) {
     loadMoreProducts,
   } = useShopifyDashboard(ads, dateRange);
 
+  const [cardsViewMode, setCardsViewMode] = useState('comparison');
+
   const filteredAndSortedProducts = useMemo(() => {
     // Filter strictly only products with active ad spend
     const items = productPerformance.filter(item => item.adSpend > 0);
@@ -303,11 +305,52 @@ export function MetaDashboard({ accessToken, accountId }) {
           />
         ) : (
           <>
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-2">
+              <h3 className="text-xs font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
+                Performance Overview
+              </h3>
+              {isShopifyConnected && (
+                <div className="inline-flex rounded-lg p-0.5 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700/80">
+                  <button
+                    onClick={() => setCardsViewMode('comparison')}
+                    className={`px-3 py-1 text-xs font-semibold rounded-md transition-all cursor-pointer ${
+                      cardsViewMode === 'comparison'
+                        ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
+                        : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                    }`}
+                  >
+                    Comparison
+                  </button>
+                  <button
+                    onClick={() => setCardsViewMode('meta')}
+                    className={`px-3 py-1 text-xs font-semibold rounded-md transition-all cursor-pointer ${
+                      cardsViewMode === 'meta'
+                        ? 'bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-sm'
+                        : 'text-slate-500 hover:text-slate-850 dark:hover:text-slate-200'
+                    }`}
+                  >
+                    Meta Only
+                  </button>
+                  <button
+                    onClick={() => setCardsViewMode('shopify')}
+                    className={`px-3 py-1 text-xs font-semibold rounded-md transition-all cursor-pointer ${
+                      cardsViewMode === 'shopify'
+                        ? 'bg-white dark:bg-slate-900 text-emerald-600 dark:text-emerald-400 shadow-sm'
+                        : 'text-slate-500 hover:text-slate-850 dark:hover:text-slate-200'
+                    }`}
+                  >
+                    Shopify Only
+                  </button>
+                </div>
+              )}
+            </div>
+
             <MetaMetricCards
               summary={summary}
               loading={loading || loadingInsights}
               shopifyConnected={isShopifyConnected}
               shopifySummary={shopifySummary}
+              viewMode={cardsViewMode}
             />
 
             {isShopifyConnected && wastedBudgetAlerts.length > 0 && (
@@ -487,9 +530,7 @@ export function MetaDashboard({ accessToken, accountId }) {
                         <ShoppingBag className="w-5 h-5 text-emerald-500" />
                         Shopify Catalog Performance
                       </h3>
-                      <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">
-                        Synchronized via inMind OMS
-                      </p>
+
                     </div>
                     <div className="flex flex-wrap items-center gap-3">
                       <div className="relative">
