@@ -34,17 +34,6 @@ const getDateRangeParams = (range) => {
     case 'last_90d':
       start.setDate(end.getDate() - 90);
       break;
-    case 'this_month':
-      start.setDate(1);
-      break;
-    case 'last_month':
-      start.setMonth(end.getMonth() - 1);
-      start.setDate(1);
-      const lastMonthEnd = new Date(end.getFullYear(), end.getMonth(), 0);
-      return {
-        start_date: start.toISOString(),
-        end_date: lastMonthEnd.toISOString()
-      };
     default:
       start.setDate(end.getDate() - 30);
   }
@@ -79,13 +68,13 @@ export function useShopifyDashboard(metaAds = [], dateRange = { preset: 'last_30
   }, []);
 
   // Fetch data from Next.js server-side API proxy
-  const fetchShopifyData = useCallback(async (urlStr = shopifyStoreUrl, tokenStr = shopifyToken, range = dateRange) => {
+  const fetchShopifyData = useCallback(async (urlStr = shopifyStoreUrl, tokenStr = shopifyToken, range = dateRange, forceRefresh = false) => {
     if (!urlStr || !tokenStr) return;
     setLoading(true);
     setError(null);
     try {
       const dates = getDateRangeParams(range);
-      console.log("[Shopify Dashboard Hook] fetchShopifyData range:", range, "dates calculated:", dates);
+      console.log("[Shopify Dashboard Hook] fetchShopifyData range:", range, "dates calculated:", dates, "forceRefresh:", forceRefresh);
       let orderUrl = `/api/shopify?type=orders&shopify_url=${encodeURIComponent(urlStr)}&shopify_token=${encodeURIComponent(tokenStr)}&limit=250`;
       if (dates.start_date) {
         orderUrl += `&start_date=${encodeURIComponent(dates.start_date)}`;
@@ -94,9 +83,16 @@ export function useShopifyDashboard(metaAds = [], dateRange = { preset: 'last_30
         orderUrl += `&end_date=${encodeURIComponent(dates.end_date)}`;
       }
 
+      let prodUrl = `/api/shopify?type=products&shopify_url=${encodeURIComponent(urlStr)}&shopify_token=${encodeURIComponent(tokenStr)}&limit=250`;
+
+      if (forceRefresh) {
+        orderUrl += '&refresh=true';
+        prodUrl += '&refresh=true';
+      }
+
       console.log("[Shopify Dashboard Hook] Fetching Shopify products and orders in parallel...");
       const [prodRes, orderRes] = await Promise.all([
-        fetch(`/api/shopify?type=products&shopify_url=${encodeURIComponent(urlStr)}&shopify_token=${encodeURIComponent(tokenStr)}&limit=50`),
+        fetch(prodUrl),
         fetch(orderUrl)
       ]);
 
@@ -309,6 +305,14 @@ export function useShopifyDashboard(metaAds = [], dateRange = { preset: 'last_30
       }
     });
 
+    console.log('🔮 [useShopifyDashboard] productPerformance debug:', {
+      isConnected,
+      productsCount: products.length,
+      ordersCount: orders.length,
+      metaAdsCount: metaAds.length,
+      matchedProducts: Object.values(perfMap).filter(p => p.adSpend > 0).map(p => ({ title: p.product.title, spend: p.adSpend }))
+    });
+
     const salesMap = {};
 
     orders.forEach(order => {
@@ -400,6 +404,12 @@ export function useShopifyDashboard(metaAds = [], dateRange = { preset: 'last_30
     return { totalRevenue, totalOrders, totalCustomers, currency };
   }, [isConnected, orders]);
 
+  const triggerRefresh = useCallback(() => {
+    if (shopifyStoreUrl && shopifyToken) {
+      fetchShopifyData(shopifyStoreUrl, shopifyToken, dateRange, true);
+    }
+  }, [shopifyStoreUrl, shopifyToken, dateRange, fetchShopifyData]);
+
   return {
     shopifyUrl: "OMS",
     isConnected,
@@ -415,7 +425,7 @@ export function useShopifyDashboard(metaAds = [], dateRange = { preset: 'last_30
     connectOauth,
     connectManual,
     disconnect,
-    refresh: fetchShopifyData,
+    refresh: triggerRefresh,
     loadMoreProducts,
   };
 }

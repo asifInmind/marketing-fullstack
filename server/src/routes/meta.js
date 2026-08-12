@@ -6,8 +6,166 @@ import {
   loadMoreAdSets, 
   loadMoreAds 
 } from '../lib/metaApi.js';
+import Merchant from '../models/Merchant.js';
+import AdMetadata from '../models/AdMetadata.js';
+import DailyAdInsight from '../models/DailyAdInsight.js';
+import CacheMarker from '../models/CacheMarker.js';
 
 const router = Router();
+
+// Helper to resolve dates
+function getMetaDateRange(preset, since, until) {
+  let start, end;
+  if (since && until) {
+    start = new Date(since);
+    end = new Date(until);
+  } else {
+    end = new Date();
+    start = new Date();
+    switch (preset) {
+      case 'last_7d':
+        start.setDate(end.getDate() - 7);
+        break;
+      case 'last_14d':
+        start.setDate(end.getDate() - 14);
+        break;
+      case 'last_30d':
+        start.setDate(end.getDate() - 30);
+        break;
+      case 'last_90d':
+        start.setDate(end.getDate() - 90);
+        break;
+      default:
+        start.setDate(end.getDate() - 30);
+    }
+  }
+  // Normalize date objects to standard Start-of-Day (00:00:00) and End-of-Day (23:59:59)
+  start.setUTCHours(0, 0, 0, 0);
+  end.setUTCHours(23, 59, 59, 999);
+  return { sinceDate: start, untilDate: end };
+}
+
+// Helper to find a fresh cache marker that fully covers the requested date range
+async function findCoveringMarker(storeUrl, channel, sinceDate, untilDate) {
+  try {
+    const markers = await CacheMarker.find({ storeUrl, channel });
+    const cacheTtl = 4 * 60 * 60 * 1000; // 4 hours TTL
+    const now = new Date();
+
+    for (const marker of markers) {
+      if (now - new Date(marker.lastUpdated) > cacheTtl) {
+        continue;
+      }
+
+      const range = getMarkerRange(marker);
+      if (range) {
+        if (range.start <= sinceDate && range.end >= untilDate) {
+          console.log(`[Cache Manager] Found covering marker "${marker.key}" for requested range ${sinceDate.toISOString().split('T')[0]} to ${untilDate.toISOString().split('T')[0]}`);
+          return marker;
+        }
+      }
+    }
+  } catch (err) {
+    console.warn("[Cache Manager] Error scanning covering markers:", err.message);
+  }
+  return null;
+}
+
+// Helper to extract the start and end dates covered by a specific cache marker
+function getMarkerRange(marker) {
+  let start, end;
+  const key = marker.key;
+  const lastUpdated = new Date(marker.lastUpdated);
+
+  if (key.startsWith('insights_custom_')) {
+    const parts = key.replace('insights_custom_', '').split('_');
+    if (parts.length === 2 && parts[0] && parts[1]) {
+      start = new Date(parts[0]);
+      end = new Date(parts[1]);
+    }
+  } else if (key.startsWith('insights_')) {
+    const preset = key.replace('insights_', '');
+    end = new Date(lastUpdated);
+    start = new Date(lastUpdated);
+    switch (preset) {
+      case 'last_7d':
+        start.setDate(end.getDate() - 7);
+        break;
+      case 'last_14d':
+        start.setDate(end.getDate() - 14);
+        break;
+      case 'last_30d':
+        start.setDate(end.getDate() - 30);
+        break;
+      case 'last_90d':
+        start.setDate(end.getDate() - 90);
+        break;
+      default:
+        return null;
+    }
+  } else if (key.startsWith('orders_')) {
+    const parts = key.replace('orders_', '').split('_');
+    if (parts.length === 2 && parts[0] && parts[1]) {
+      start = new Date(parts[0]);
+      end = new Date(parts[1]);
+    }
+  } else {
+    return null;
+  }
+
+  if (start && end) {
+    start.setUTCHours(0, 0, 0, 0);
+    end.setUTCHours(23, 59, 59, 999);
+    return { start, end };
+  }
+  return null;
+}
+
+// GET /api/meta/debug-meta
+router.get('/debug-meta', async (req, res) => {
+  try {
+    let accessToken = req.query.access_token;
+    const accountId = req.query.account_id;
+    if (!accountId) {
+      return res.status(400).json({ error: "Missing account ID" });
+    }
+
+    if (!accessToken) {
+      const cleanActId = accountId.startsWith('act_') ? accountId.replace('act_', '') : accountId;
+      const merchant = await Merchant.findOne({
+        $or: [
+          { adAccountId: accountId },
+          { adAccountId: cleanActId },
+          { "integrations.meta.adAccountId": accountId },
+          { "integrations.meta.adAccountId": `act_${accountId}` }
+        ]
+      });
+      if (merchant && merchant.fbAccessToken) {
+        accessToken = merchant.fbAccessToken;
+      } else if (merchant && merchant.integrations?.meta?.accessToken) {
+        accessToken = merchant.integrations.meta.accessToken;
+      }
+    }
+
+    if (!accessToken) {
+      return res.status(400).json({ error: "Could not find Meta access token in DB or query" });
+    }
+    
+    const { fetchAllAds, fetchAllAdsInsights } = await import('../lib/metaApi.js');
+    const config = { accessToken, accountId };
+    const adsResult = await fetchAllAds(config, undefined, 150);
+    const insightsResult = await fetchAllAdsInsights(config);
+    
+    return res.json({
+      adsCount: adsResult.data?.length || 0,
+      ads: adsResult.data?.map(a => ({ id: a.id, name: a.name, status: a.status, effective_status: a.effective_status })),
+      insightsCount: Object.keys(insightsResult).length,
+      insightsKeys: Object.keys(insightsResult)
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
 
 // GET /api/meta
 router.get('/', async (req, res) => {
@@ -35,6 +193,249 @@ router.get('/', async (req, res) => {
       return res.status(400).json({ error: 'Missing account_id parameter' });
     }
 
+    // Helper to sanitize shop domain name (defined locally for route safety)
+    const sanitizeShopUrl = (shopUrl) => {
+      let url = shopUrl.trim().toLowerCase();
+      url = url.replace(/^https?:\/\//, '');
+      url = url.replace(/\/$/, '');
+      if (!url.includes('.')) {
+        url = `${url}.myshopify.com`;
+      }
+      return url;
+    };
+
+    // Resolve store tenant from adAccountId or shopify_url query param
+    let storeUrl = 'unknown';
+    const shopifyUrlParam = req.query.shopify_url;
+
+    if (shopifyUrlParam) {
+      storeUrl = sanitizeShopUrl(shopifyUrlParam);
+      // Auto-link/Upsert Meta credentials into the Merchant record
+      try {
+        await Merchant.findOneAndUpdate(
+          { storeUrl },
+          {
+            storeUrl,
+            adAccountId: accountId,
+            fbAccessToken: accessToken,
+            $set: {
+              "integrations.meta.accessToken": accessToken,
+              "integrations.meta.adAccountId": accountId,
+              "integrations.meta.connectedAt": new Date()
+            }
+          },
+          { upsert: true, new: true }
+        );
+        console.log(`[Meta API Route] Auto-linked Meta Account ${accountId} to Merchant ${storeUrl}`);
+      } catch (err) {
+        console.warn("[Meta API Route] Merchant auto-link update failed:", err.message);
+      }
+    } else {
+      // Fallback: lookup by accountId
+      try {
+        const cleanActId = accountId.startsWith('act_') ? accountId.replace('act_', '') : accountId;
+        const merchant = await Merchant.findOne({
+          $or: [
+            { adAccountId: accountId },
+            { adAccountId: cleanActId },
+            { "integrations.meta.adAccountId": accountId },
+            { "integrations.meta.adAccountId": `act_${accountId}` }
+          ]
+        });
+        if (merchant) {
+          storeUrl = merchant.storeUrl;
+        }
+      } catch (err) {
+        console.warn("[Meta API Route] Merchant DB lookup error:", err.message);
+      }
+    }
+
+    const { sinceDate, untilDate } = getMetaDateRange(datePreset, since, until);
+
+    const forceRefresh = req.query.refresh === 'true';
+    // 1. Try Cache First (Skip if storeUrl is unknown or forceRefresh is true)
+    if (storeUrl !== 'unknown' && !forceRefresh) {
+      try {
+        const cacheMarker = await findCoveringMarker(storeUrl, 'meta', sinceDate, untilDate);
+        const isCacheValid = !!cacheMarker;
+
+        if (isCacheValid) {
+          const dbInsights = await DailyAdInsight.find({
+            storeUrl,
+            date: { $gte: sinceDate, $lte: untilDate }
+          });
+          const dbMeta = await AdMetadata.find({ storeUrl });
+          
+          // Verify that we have the structural metadata cached for all unique ads in insights
+          const uniqueAdIdsInInsights = [...new Set(dbInsights.map(i => i.adId))];
+          const cachedAdIds = dbMeta.map(m => m.adId);
+          const hasAllStructures = uniqueAdIdsInInsights.every(adId => cachedAdIds.includes(adId));
+
+          if (dbMeta && dbMeta.length > 0 && hasAllStructures && dbInsights.length > 0) {
+            console.log(`[Meta API Route] Cache HIT: Returning ${dbMeta.length} ads and ${dbInsights.length} daily insights from MongoDB`);
+            // Reconstruct campaigns, adsets, ads list
+            const campaignMap = {};
+            const adSetMap = {};
+            const adsList = [];
+            const creativesMap = {};
+            
+            dbMeta.forEach(m => {
+              if (m.campaignId) {
+                campaignMap[m.campaignId] = {
+                  id: m.campaignId,
+                  name: m.campaignName,
+                  status: m.campaignStatus,
+                  objective: m.campaignObjective
+                };
+              }
+              if (m.adSetId) {
+                let parsedTargeting = null;
+                try {
+                  if (m.adSetTargeting) {
+                    parsedTargeting = JSON.parse(m.adSetTargeting);
+                  }
+                } catch (e) {
+                  parsedTargeting = m.adSetTargeting;
+                }
+
+                adSetMap[m.adSetId] = {
+                  id: m.adSetId,
+                  name: m.adSetName,
+                  status: m.adSetStatus,
+                  targeting: parsedTargeting
+                };
+              }
+              adsList.push({
+                id: m.adId,
+                name: m.adName,
+                status: m.adStatus,
+                campaign_id: m.campaignId,
+                campaign_name: m.campaignName,
+                adset_id: m.adSetId,
+                adset_name: m.adSetName,
+                creative: m.creative?.creativeId ? { id: m.creative.creativeId } : undefined
+              });
+              if (m.creative && m.creative.creativeId) {
+                creativesMap[m.adId] = {
+                  id: m.creative.creativeId,
+                  name: m.creative.creativeName,
+                  thumbnail_url: m.creative.thumbnailUrl,
+                  body: m.creative.bodyText,
+                  destination_url: m.creative.destinationUrl,
+                  url_tags: m.creative.destinationUrl, // Frontend looks here for click links
+                  final_url: m.creative.destinationUrl, // Frontend fallback checks final_url
+                  call_to_action: m.creative.callToAction,
+                  format: m.creative.format
+                };
+              }
+            });
+
+            // Aggregate daily insights by adId, campaignId, and adSetId
+            const adInsights = {};
+            const adSetInsights = {};
+            const campaignInsights = {};
+
+            let totalSpend = 0;
+            let totalImpressions = 0;
+            let totalClicks = 0;
+            let totalConversions = 0;
+            let totalRevenue = 0;
+
+            dbInsights.forEach(insight => {
+              const metaAd = dbMeta.find(m => m.adId === insight.adId);
+              const campaignId = metaAd?.campaignId;
+              const adSetId = metaAd?.adSetId;
+
+              // Ad-level sum
+              if (!adInsights[insight.adId]) {
+                adInsights[insight.adId] = { spend: 0, impressions: 0, clicks: 0, conversions: 0, conversion_values: 0 };
+              }
+              adInsights[insight.adId].spend += insight.spend;
+              adInsights[insight.adId].impressions += insight.impressions;
+              adInsights[insight.adId].clicks += insight.clicks;
+              adInsights[insight.adId].conversions += insight.conversions;
+              adInsights[insight.adId].conversion_values += insight.conversionValue;
+
+              // AdSet-level sum
+              if (adSetId) {
+                if (!adSetInsights[adSetId]) {
+                  adSetInsights[adSetId] = { spend: 0, impressions: 0, clicks: 0, conversions: 0, conversion_values: 0 };
+                }
+                adSetInsights[adSetId].spend += insight.spend;
+                adSetInsights[adSetId].impressions += insight.impressions;
+                adSetInsights[adSetId].clicks += insight.clicks;
+                adSetInsights[adSetId].conversions += insight.conversions;
+                adSetInsights[adSetId].conversion_values += insight.conversionValue;
+              }
+
+              // Campaign-level sum
+              if (campaignId) {
+                if (!campaignInsights[campaignId]) {
+                  campaignInsights[campaignId] = { spend: 0, impressions: 0, clicks: 0, conversions: 0, conversion_values: 0 };
+                }
+                campaignInsights[campaignId].spend += insight.spend;
+                campaignInsights[campaignId].impressions += insight.impressions;
+                campaignInsights[campaignId].clicks += insight.clicks;
+                campaignInsights[campaignId].conversions += insight.conversions;
+                campaignInsights[campaignId].conversion_values += insight.conversionValue;
+              }
+
+              // Grand Total Sum
+              totalSpend += insight.spend;
+              totalImpressions += insight.impressions;
+              totalClicks += insight.clicks;
+              totalConversions += insight.conversions;
+              totalRevenue += insight.conversionValue;
+            });
+
+            const avgCTR = totalImpressions > 0 ? (totalClicks / totalImpressions) * 100 : 0;
+            const avgCPC = totalClicks > 0 ? totalSpend / totalClicks : 0;
+            const avgROAS = totalSpend > 0 ? totalRevenue / totalSpend : 0;
+
+            const activeCampCount = Object.values(campaignMap).filter(c => c.status === 'ACTIVE').length;
+            const pausedCampCount = Object.values(campaignMap).filter(c => c.status !== 'ACTIVE').length;
+
+            const payload = {
+              campaigns: Object.values(campaignMap),
+              adSets: Object.values(adSetMap),
+              ads: adsList,
+              campaignInsights,
+              adSetInsights,
+              adInsights,
+              creatives: creativesMap,
+              summary: {
+                totalSpend,
+                totalImpressions,
+                totalClicks,
+                totalConversions,
+                totalRevenue,
+                avgCTR,
+                avgCPC,
+                avgROAS,
+                averageROAS: avgROAS,
+                activeCampaigns: activeCampCount,
+                pausedCampaigns: pausedCampCount
+              },
+              pagination: {
+                campaigns: { hasMore: false },
+                adSets: { hasMore: false },
+                ads: { hasMore: false }
+              },
+              loading: false
+            };
+
+            return res.json({
+              success: true,
+              data: payload
+            });
+          }
+        }
+      } catch (dbErr) {
+        console.warn("[Meta API Route] DB fetch failed, falling back to API:", dbErr.message);
+      }
+    }
+
+    // 2. Cache MISS: Fetch from Meta live (force high pageSize of 150 to cache all active structures)
     const config = {
       accessToken,
       accountId,
@@ -43,16 +444,113 @@ router.get('/', async (req, res) => {
         since,
         until,
       },
-      pageSize,
+      pageSize: 150, // Retrieve and cache the entire Meta structure in MongoDB
     };
 
+    console.log(`[Meta API Route] Cache MISS: Fetching live from Meta Graph API (forcing limit 150)...`);
     let data;
     if (type === 'structure') {
-      data = await fetchCompleteDashboard(config, pageSize, false);
+      data = await fetchCompleteDashboard(config, 150, false);
     } else if (type === 'insights') {
       data = await fetchDashboardInsightsOnly(config);
     } else {
-      data = await fetchCompleteDashboard(config, pageSize, true);
+      data = await fetchCompleteDashboard(config, 150, true);
+    }
+
+    // 3. Cache fetched data to MongoDB in background
+    if (storeUrl !== 'unknown' && data) {
+      const cachePromises = [];
+
+      // A. Cache AdMetadata
+      if (data.ads) {
+        data.ads.forEach(ad => {
+          const campaign = data.campaigns?.find(c => c.id === ad.campaign_id) || {};
+          const adSet = data.adSets?.find(s => s.id === ad.adset_id) || {};
+          const creative = data.creatives?.[ad.id] || {};
+
+          cachePromises.push(
+            AdMetadata.findOneAndUpdate(
+              { adId: ad.id },
+              {
+                storeUrl,
+                channel: 'meta',
+                campaignId: ad.campaign_id,
+                campaignName: campaign.name || ad.campaign_name || '',
+                campaignStatus: campaign.status || ad.campaign_status || '',
+                campaignObjective: campaign.objective || '',
+                adSetId: ad.adset_id,
+                adSetName: adSet.name || ad.adset_name || '',
+                adSetStatus: adSet.status || ad.adset_status || '',
+                adSetTargeting: adSet.targeting ? JSON.stringify(adSet.targeting) : '',
+                adId: ad.id,
+                adName: ad.name,
+                adStatus: ad.status || '',
+                creative: {
+                  creativeId: ad.creative?.id || creative.id || '',
+                  creativeName: creative.name || '',
+                  thumbnailUrl: creative.thumbnail_url || '',
+                  bodyText: creative.body || '',
+                  destinationUrl: creative.url_tags || creative.destination_url || '',
+                  callToAction: creative.call_to_action || '',
+                  format: creative.format || ''
+                },
+                lastUpdated: new Date()
+              },
+              { upsert: true, new: true }
+            )
+          );
+        });
+      }
+
+      // B. Cache DailyAdInsights (normalize the storage date to midnight Start-of-Day)
+      if (data.dailyInsights) {
+        data.dailyInsights.forEach(ins => {
+          const insightDate = new Date(ins.date_start || new Date());
+          insightDate.setUTCHours(0, 0, 0, 0); // Normalize to clean daily day boundaries
+          
+          cachePromises.push(
+            DailyAdInsight.findOneAndUpdate(
+              { storeUrl, date: insightDate, adId: ins.ad_id },
+              {
+                storeUrl,
+                date: insightDate,
+                channel: 'meta',
+                adId: ins.ad_id,
+                spend: parseFloat(ins.spend || 0),
+                impressions: parseInt(ins.impressions || 0, 10),
+                clicks: parseInt(ins.clicks || 0, 10),
+                conversions: parseInt(ins.conversions || 0, 10),
+                conversionValue: parseFloat(ins.conversion_values || 0)
+              },
+              { upsert: true, new: true }
+            )
+          );
+        });
+      }
+
+      if (type !== 'structure') {
+        const markerKey = (datePreset && datePreset !== 'custom')
+          ? `insights_${datePreset}`
+          : `insights_custom_${since || ''}_${until || ''}`;
+        cachePromises.push(
+          CacheMarker.findOneAndUpdate(
+            { storeUrl, channel: 'meta', key: markerKey },
+            { lastUpdated: new Date() },
+            { upsert: true, new: true }
+          )
+        );
+      }
+      
+      Promise.all(cachePromises)
+        .then(() => console.log(`[Meta API Route] Successfully cached ${cachePromises.length} Meta structures, insights, and marker in MongoDB`))
+        .catch(err => {
+          console.error("❌ [Meta API Route] Error caching Meta data in MongoDB:", err);
+          if (err.errors) {
+            Object.entries(err.errors).forEach(([field, error]) => {
+              console.error(`  Validation Error on field "${field}":`, error.message);
+            });
+          }
+        });
     }
 
     return res.json({
@@ -61,6 +559,21 @@ router.get('/', async (req, res) => {
     });
   } catch (error) {
     console.error('Meta API Route Error:', error);
+    // Detect expired/invalid access token - return 401 so frontend can re-authenticate
+    const isAuthError = error?.code === 190 || error?.type === 'OAuthException' ||
+      (typeof error?.message === 'string' && (
+        error.message.includes('Session has expired') ||
+        error.message.includes('Invalid OAuth') ||
+        error.message.includes('access token')
+      ));
+    if (isAuthError) {
+      return res.status(401).json({
+        success: false,
+        error: 'Meta access token has expired. Please reconnect your Meta account.',
+        code: 'TOKEN_EXPIRED',
+        originalCode: error?.code,
+      });
+    }
     const statusCode = (error?.code === 4 || error?.code === 17) ? 429 : 500;
     return res.status(statusCode).json({
       success: false,
@@ -109,6 +622,81 @@ router.post('/', async (req, res) => {
         if (!ads) {
           return res.status(400).json({ error: 'Missing ads parameters for loading creatives' });
         }
+
+        // Extract ad IDs from incoming structures
+        const adIds = ads.map(a => typeof a === 'object' ? a.id : a).filter(Boolean);
+
+        // 1. Try Loading from MongoDB Cache First
+        try {
+          const dbAds = await AdMetadata.find({ adId: { $in: adIds } });
+          const cachedCreatives = {};
+
+          dbAds.forEach(m => {
+            const hasContent = m.creative?.destinationUrl || m.creative?.creativeName || m.creative?.bodyText;
+            if (m.creative && m.creative.creativeId && hasContent) {
+              cachedCreatives[m.adId] = {
+                id: m.creative.creativeId,
+                name: m.creative.creativeName,
+                thumbnail_url: m.creative.thumbnailUrl,
+                body: m.creative.bodyText,
+                destination_url: m.creative.destinationUrl,
+                url_tags: m.creative.destinationUrl,
+                final_url: m.creative.destinationUrl,
+                call_to_action: m.creative.callToAction,
+                format: m.creative.format
+              };
+            }
+          });
+
+          const missingAdIds = adIds.filter(id => !cachedCreatives[id]);
+
+          if (missingAdIds.length === 0) {
+            console.log(`[Meta API Route] Cache HIT: Returning ${Object.keys(cachedCreatives).length} creatives from MongoDB`);
+            result = cachedCreatives;
+            break;
+          }
+
+          console.log(`[Meta API Route] Cache PARTIAL HIT: Fetching ${missingAdIds.length} missing creatives from Meta Graph API...`);
+          const { loadCreativesForAds } = await import('../lib/metaApi.js');
+
+          const missingAdsFormat = dbAds
+            .filter(m => missingAdIds.includes(m.adId))
+            .map(m => ({ id: m.adId, creative: { id: m.creative?.creativeId || ads.find(a => a.id === m.adId)?.creative?.id } }))
+            .filter(a => a.creative?.id);
+
+          let liveCreatives = {};
+          if (missingAdsFormat.length > 0) {
+            liveCreatives = await loadCreativesForAds(missingAdsFormat, config);
+
+            // Cache live fetched creatives in the background
+            const creativePromises = Object.entries(liveCreatives).map(([adId, creative]) => {
+              console.log(`[DEBUG Creatives Caching] adId=${adId}, creativeId=${creative.id}, final_url=${creative.final_url}, keys=${Object.keys(creative).join(', ')}`);
+              return AdMetadata.findOneAndUpdate(
+                { adId },
+                {
+                  creative: {
+                    creativeId: creative.id || '',
+                    creativeName: creative.headline || creative.name || '',
+                    thumbnailUrl: creative.thumbnail_url || creative.image_url || '',
+                    bodyText: creative.description || creative.body || '',
+                    destinationUrl: creative.final_url || creative.url_tags || creative.destination_url || '',
+                    callToAction: creative.call_to_action || '',
+                    format: creative.format || ''
+                  }
+                },
+                { upsert: false }
+              );
+            });
+            Promise.all(creativePromises).catch(err => console.error("Error caching creatives:", err));
+          }
+
+          result = { ...cachedCreatives, ...liveCreatives };
+          break;
+        } catch (dbErr) {
+          console.warn("[Meta API Route] DB creatives fetch failed, falling back to API:", dbErr.message);
+        }
+
+        // 2. Fallback directly to Meta Graph API
         const { loadCreativesForAds } = await import('../lib/metaApi.js');
         result = await loadCreativesForAds(ads, config);
         break;

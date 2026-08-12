@@ -40,6 +40,7 @@ export function useMetaDashboard(accessToken, accountId) {
   });
   const [loadingCreatives, setLoadingCreatives] = useState(false);
   const [error, setError] = useState(null);
+  const [tokenExpired, setTokenExpired] = useState(false);
   const [dateRange, setDateRange] = useState({
     preset: 'last_30d',
   });
@@ -72,7 +73,7 @@ export function useMetaDashboard(accessToken, accountId) {
   }, [data]);
   
   // Fetch dashboard data
-  const fetchDashboard = useCallback(async () => {
+  const fetchDashboard = useCallback(async (forceRefresh = false) => {
     setLoading(true);
     setLoadingInsights(true);
     setError(null);
@@ -83,6 +84,11 @@ export function useMetaDashboard(accessToken, accountId) {
       page_size: String(configRef.current.pageSize || 10),
     });
 
+    const storedShopUrl = localStorage.getItem('shopifyStoreUrl');
+    if (storedShopUrl) {
+      baseParams.append('shopify_url', storedShopUrl);
+    }
+
     if (configRef.current.dateRange?.since) {
       baseParams.append('since', configRef.current.dateRange.since);
     }
@@ -91,9 +97,12 @@ export function useMetaDashboard(accessToken, accountId) {
     }
 
     try {
-      console.log('📡 Step 1: Fetching dashboard structure...');
+      console.log('📡 Step 1: Fetching dashboard structure (forceRefresh:', forceRefresh, ')...');
       const structParams = new URLSearchParams(baseParams);
       structParams.append('type', 'structure');
+      if (forceRefresh) {
+        structParams.append('refresh', 'true');
+      }
 
       const structResponse = await fetch(`/api/meta?${structParams.toString()}`, {
         headers: {
@@ -116,9 +125,12 @@ export function useMetaDashboard(accessToken, accountId) {
       setLoading(false); // Stop structure loading spinner, show UI
 
       // Step 2: Fetch insights in the background
-      console.log('📡 Step 2: Fetching dashboard insights...');
+      console.log('📡 Step 2: Fetching dashboard insights (forceRefresh:', forceRefresh, ')...');
       const insightsParams = new URLSearchParams(baseParams);
       insightsParams.append('type', 'insights');
+      if (forceRefresh) {
+        insightsParams.append('refresh', 'true');
+      }
 
       fetch(`/api/meta?${insightsParams.toString()}`, {
         headers: {
@@ -147,6 +159,14 @@ export function useMetaDashboard(accessToken, accountId) {
               };
             });
           } else {
+            // Check if the token has expired
+            if (insightsResult.code === 'TOKEN_EXPIRED') {
+              console.warn('⚠️ Meta token expired - insights unavailable. User must reconnect.');
+              setTokenExpired(true);
+              setError('Meta access token has expired. Please reconnect your Meta account.');
+            } else {
+              console.warn('⚠️ Failed to fetch insights:', insightsResult.error);
+            }
           }
         })
         .catch(err => {
@@ -196,6 +216,10 @@ export function useMetaDashboard(accessToken, accountId) {
       }
 
     } catch (err) {
+      // Check if the error is a token expiry from the structure fetch
+      if (err.message?.includes('TOKEN_EXPIRED') || err.message?.includes('expired')) {
+        setTokenExpired(true);
+      }
       setError(err.message || 'Failed to fetch dashboard data');
       setData(null);
       setLoading(false);
@@ -393,6 +417,10 @@ export function useMetaDashboard(accessToken, accountId) {
     data?.pagination.ads.hasMore
   ]);
   
+  const triggerRefresh = useCallback(() => {
+    fetchDashboard(true);
+  }, [fetchDashboard]);
+
   return {
     campaigns: transformed?.campaigns || EMPTY_ARRAY,
     adSets: transformed?.adSets || EMPTY_ARRAY,
@@ -406,8 +434,9 @@ export function useMetaDashboard(accessToken, accountId) {
     error,
     loadMore,
     loadCreatives,
-    refresh: fetchDashboard,
+    refresh: triggerRefresh,
     setDateRange: handleSetDateRange,
     dateRange,
+    tokenExpired,
   };
 }
