@@ -660,40 +660,59 @@ export async function fetchAllAdsInsights(config) {
 
   try {
     console.log(`📡 Fetching all ad insights with daily breakdown...`);
-    const result = await metaQueue.add(() =>
-      callMetaApi(`${cleanActId}/insights`, params, config)
-    );
-
+    
+    let hasNextPage = true;
+    let afterCursor = null;
     const adInsights = {};
     const dailyInsights = [];
+    let pageCount = 1;
 
-    result.data?.forEach(insight => {
-      if (insight.ad_id) {
-        dailyInsights.push(insight);
-
-        if (!adInsights[insight.ad_id]) {
-          adInsights[insight.ad_id] = {
-            ad_id: insight.ad_id,
-            ad_name: insight.ad_name,
-            spend: 0,
-            impressions: 0,
-            clicks: 0,
-            conversions: 0,
-            conversion_values: 0,
-            date_start: insight.date_start,
-            date_stop: insight.date_stop
-          };
-        }
-
-        adInsights[insight.ad_id].spend += parseFloat(insight.spend || 0);
-        adInsights[insight.ad_id].impressions += parseInt(insight.impressions || 0, 10);
-        adInsights[insight.ad_id].clicks += parseInt(insight.clicks || 0, 10);
-        adInsights[insight.ad_id].conversions += parseInt(insight.conversions || 0, 10);
-        adInsights[insight.ad_id].conversion_values += parseFloat(insight.conversion_values || 0);
+    while (hasNextPage && pageCount <= 15) {
+      const currentParams = { ...params };
+      if (afterCursor) {
+        currentParams.after = afterCursor;
       }
-    });
 
-    console.log(`✅ Fetched ${dailyInsights.length} daily ad insights for ${Object.keys(adInsights).length} ads`);
+      console.log(`[Meta API Pagination] Fetching ad insights page ${pageCount}...`);
+      const result = await metaQueue.add(() =>
+        callMetaApi(`${cleanActId}/insights`, currentParams, config)
+      );
+
+      result.data?.forEach(insight => {
+        if (insight.ad_id) {
+          dailyInsights.push(insight);
+
+          if (!adInsights[insight.ad_id]) {
+            adInsights[insight.ad_id] = {
+              ad_id: insight.ad_id,
+              ad_name: insight.ad_name,
+              spend: 0,
+              impressions: 0,
+              clicks: 0,
+              conversions: 0,
+              conversion_values: 0,
+              date_start: insight.date_start,
+              date_stop: insight.date_stop
+            };
+          }
+
+          adInsights[insight.ad_id].spend += parseFloat(insight.spend || 0);
+          adInsights[insight.ad_id].impressions += parseInt(insight.impressions || 0, 10);
+          adInsights[insight.ad_id].clicks += parseInt(insight.clicks || 0, 10);
+          adInsights[insight.ad_id].conversions += parseInt(insight.conversions || 0, 10);
+          adInsights[insight.ad_id].conversion_values += parseFloat(insight.conversion_values || 0);
+        }
+      });
+
+      if (result.paging?.cursors?.after) {
+        afterCursor = result.paging.cursors.after;
+        pageCount++;
+      } else {
+        hasNextPage = false;
+      }
+    }
+
+    console.log(`✅ Fetched ${dailyInsights.length} daily ad insights for ${Object.keys(adInsights).length} ads across ${pageCount} pages`);
     return { adInsights, dailyInsights };
   } catch (error) {
     // Re-throw auth errors (expired token, invalid token) so route can return 401
