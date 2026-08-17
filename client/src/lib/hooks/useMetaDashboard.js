@@ -124,7 +124,7 @@ export function useMetaDashboard(accessToken, accountId) {
       setData(structResult.data);
       setLoading(false); // Stop structure loading spinner, show UI
 
-      // Step 2: Fetch insights in the background
+      // Step 2: Fetch insights sequentially
       console.log('📡 Step 2: Fetching dashboard insights (forceRefresh:', forceRefresh, ')...');
       const insightsParams = new URLSearchParams(baseParams);
       insightsParams.append('type', 'insights');
@@ -132,91 +132,85 @@ export function useMetaDashboard(accessToken, accountId) {
         insightsParams.append('refresh', 'true');
       }
 
-      fetch(`/api/meta?${insightsParams.toString()}`, {
-        headers: {
-          'Authorization': `Bearer ${configRef.current.accessToken}`
+      try {
+        const insightsRes = await fetch(`/api/meta?${insightsParams.toString()}`, {
+          headers: {
+            'Authorization': `Bearer ${configRef.current.accessToken}`
+          }
+        });
+        const insightsResult = await insightsRes.json();
+        if (insightsResult.success) {
+          console.log('✅ Insights fetched successfully');
+          setData(prev => {
+            if (!prev) return null;
+            return {
+              ...prev,
+              campaignInsights: insightsResult.data.campaignInsights || {},
+              adSetInsights: insightsResult.data.adSetInsights || {},
+              adInsights: insightsResult.data.adInsights || {},
+              summary: {
+                ...prev.summary,
+                ...insightsResult.data.summary,
+              },
+              loading: {
+                ...prev.loading,
+                insights: false
+              }
+            };
+          });
+        } else {
+          if (insightsResult.code === 'TOKEN_EXPIRED') {
+            console.warn('⚠️ Meta token expired - insights unavailable. User must reconnect.');
+            setTokenExpired(true);
+            setError('Meta access token has expired. Please reconnect your Meta account.');
+          } else {
+            console.warn('⚠️ Failed to fetch insights:', insightsResult.error);
+          }
         }
-      })
-        .then(res => res.json())
-        .then(insightsResult => {
-          if (insightsResult.success) {
-            console.log('✅ Insights fetched successfully');
+      } catch (err) {
+        console.warn('⚠️ Insights network error:', err);
+      } finally {
+        setLoadingInsights(false);
+      }
+
+      // Step 3: Fetch creatives sequentially (enables instant Shopify matching)
+      if (structResult.data.ads && structResult.data.ads.length > 0) {
+        setLoadingCreatives(true);
+        try {
+          const creativesRes = await fetch('/api/meta', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              accessToken: configRef.current.accessToken,
+              accountId: configRef.current.accountId,
+              type: 'creatives',
+              ads: structResult.data.ads,
+            }),
+          });
+          const creativesResult = await creativesRes.json();
+          if (creativesResult.success) {
+            console.log('✅ Creatives fetched successfully');
             setData(prev => {
               if (!prev) return null;
               return {
                 ...prev,
-                campaignInsights: insightsResult.data.campaignInsights || {},
-                adSetInsights: insightsResult.data.adSetInsights || {},
-                adInsights: insightsResult.data.adInsights || {},
-                summary: {
-                  ...prev.summary,
-                  ...insightsResult.data.summary,
-                },
-                loading: {
-                  ...prev.loading,
-                  insights: false
+                creatives: {
+                  ...prev.creatives,
+                  ...creativesResult.data,
                 }
               };
             });
-          } else {
-            // Check if the token has expired
-            if (insightsResult.code === 'TOKEN_EXPIRED') {
-              console.warn('⚠️ Meta token expired - insights unavailable. User must reconnect.');
-              setTokenExpired(true);
-              setError('Meta access token has expired. Please reconnect your Meta account.');
-            } else {
-              console.warn('⚠️ Failed to fetch insights:', insightsResult.error);
-            }
           }
-        })
-        .catch(err => {
-          console.warn('⚠️ Insights network error:', err);
-        })
-        .finally(() => {
-          setLoadingInsights(false);
-        });
-
-      // Step 3: Fetch creatives in the background (enables instant Shopify matching)
-      if (structResult.data.ads && structResult.data.ads.length > 0) {
-        setLoadingCreatives(true);
-        fetch('/api/meta', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            accessToken: configRef.current.accessToken,
-            accountId: configRef.current.accountId,
-            type: 'creatives',
-            ads: structResult.data.ads,
-          }),
-        })
-          .then(res => res.json())
-          .then(creativesResult => {
-            if (creativesResult.success) {
-              console.log('✅ Creatives fetched successfully in background');
-              setData(prev => {
-                if (!prev) return null;
-                return {
-                  ...prev,
-                  creatives: {
-                    ...prev.creatives,
-                    ...creativesResult.data,
-                  }
-                };
-              });
-            }
-          })
-          .catch(err => {
-            console.warn('⚠️ Creatives network error:', err);
-          })
-          .finally(() => {
-            setLoadingCreatives(false);
-          });
+        } catch (err) {
+          console.warn('⚠️ Creatives network error:', err);
+        } finally {
+          setLoadingCreatives(false);
+        }
       }
 
     } catch (err) {
-      // Check if the error is a token expiry from the structure fetch
       if (err.message?.includes('TOKEN_EXPIRED') || err.message?.includes('expired')) {
         setTokenExpired(true);
       }

@@ -270,6 +270,8 @@ const AD_FIELDS = [
   'name',
   'adset_id',
   'campaign_id',
+  'campaign{id,name}',
+  'adset{id,name}',
   'status',
   'effective_status',
   'creative',
@@ -405,7 +407,8 @@ export async function fetchAllAds(config, after, limit = META_API.PAGE_SIZE) {
 const CREATIVE_FIELDS = [
   'id',
   'name',
-  'object_story_spec{link_data{link,message,name,description,call_to_action}}',
+  'body',
+  'object_story_spec{link_data{link,message,name,description,call_to_action},video_data{image_url,message,call_to_action},template_data{link,message,name}}',
   'image_url',
   'thumbnail_url'
 ].join(',');
@@ -451,13 +454,19 @@ export async function fetchCreativesBatch(creativeIds, config) {
         Object.entries(result).forEach(([id, creative]) => {
           if (creative) {
             const linkData = creative.object_story_spec?.link_data || {};
+            const videoData = creative.object_story_spec?.video_data || {};
+            const templateData = creative.object_story_spec?.template_data || {};
+
+            const headlineText = linkData.name || videoData.call_to_action?.value?.title || templateData.name || creative.name || 'N/A';
+            const bodyText = linkData.message || videoData.message || templateData.message || creative.body || 'N/A';
+            const finalLink = linkData.link || videoData.call_to_action?.value?.link || templateData.link || 'N/A';
 
             creativeMap[id] = {
               id: creative.id,
-              headline: linkData.name || 'N/A',
-              description: linkData.message || 'N/A',
-              final_url: linkData.link || 'N/A',
-              call_to_action: linkData.call_to_action?.type || 'N/A',
+              headline: headlineText,
+              description: bodyText,
+              final_url: finalLink,
+              call_to_action: linkData.call_to_action?.type || videoData.call_to_action?.type || 'N/A',
               image_url: creative.image_url || '',
               thumbnail_url: creative.thumbnail_url || '',
               fullCreative: creative

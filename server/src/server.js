@@ -34,6 +34,12 @@ app.get('/health', (req, res) => {
   res.json({ status: 'OK', message: 'AdManager backend is running smoothly.' });
 });
 
+// Disable browser caching for API routes to ensure filter switches fetch fresh DB data
+app.use('/api', (req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  next();
+});
+
 // Mount Routes
 app.use('/api', authRoutes);
 app.use('/api/meta', metaRoutes);

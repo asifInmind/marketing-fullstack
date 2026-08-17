@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import { Target } from 'lucide-react';
 import { MetaStatusBadge } from './MetaStatusBadge.jsx';
 
@@ -8,8 +8,18 @@ export const MetaAdSetTable = React.memo(function MetaAdSetTable({
   adSets, 
   loading, 
   loadingInsights = false,
+  onAdSetClick,
   currencyCode = 'USD'
 }) {
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 20;
+
+  const paginatedAdSets = adSets.slice(
+    (currentPage - 1) * itemsPerPage,
+    currentPage * itemsPerPage
+  );
+
+  const totalPages = Math.ceil(adSets.length / itemsPerPage);
   const formatVal = (amount) => {
     try {
       return new Intl.NumberFormat('en-US', {
@@ -58,7 +68,7 @@ export const MetaAdSetTable = React.memo(function MetaAdSetTable({
             </tr>
           </thead>
           <tbody>
-            {adSets.length === 0 ? (
+            {paginatedAdSets.length === 0 ? (
               <tr>
                 <td colSpan={9} className="text-center py-8 text-slate-500 dark:text-slate-400">
                   <div className="flex flex-col items-center gap-2">
@@ -69,12 +79,21 @@ export const MetaAdSetTable = React.memo(function MetaAdSetTable({
                 </td>
               </tr>
             ) : (
-              adSets.map((adSet) => (
+              paginatedAdSets.map((adSet) => (
                 <tr key={adSet.id} className="border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
                   <td className="px-4 py-3">
-                    <div className="font-medium text-slate-900 dark:text-white text-sm">
-                      {adSet.name}
-                    </div>
+                    {onAdSetClick ? (
+                      <div 
+                        className="font-medium text-slate-900 cursor-pointer hover:text-emerald-500 dark:text-white text-sm" 
+                        onClick={() => onAdSetClick(adSet.id)}
+                      >
+                        {adSet.name}
+                      </div>
+                    ) : (
+                      <div className="font-medium text-slate-900 dark:text-white text-sm">
+                        {adSet.name}
+                      </div>
+                    )}
                     <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                       Opt: {adSet.optimizationGoal}
                     </div>
@@ -131,6 +150,31 @@ export const MetaAdSetTable = React.memo(function MetaAdSetTable({
           </tbody>
         </table>
       </div>
+
+      {totalPages > 1 && (
+        <div className="p-4 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 flex items-center justify-between gap-3 text-xs text-slate-500 dark:text-slate-400">
+          <div>
+            Showing {(currentPage - 1) * itemsPerPage + 1} to {Math.min(currentPage * itemsPerPage, adSets.length)} of {adSets.length} ad sets
+          </div>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+              disabled={currentPage === 1}
+              className="px-2.5 py-1 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 disabled:opacity-50 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors disabled:cursor-not-allowed font-medium text-slate-700 dark:text-slate-300"
+            >
+              Previous
+            </button>
+            <span className="px-2">Page {currentPage} of {totalPages}</span>
+            <button
+              onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+              disabled={currentPage === totalPages}
+              className="px-2.5 py-1 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 disabled:opacity-50 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors disabled:cursor-not-allowed font-medium text-slate-700 dark:text-slate-300"
+            >
+              Next
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 });

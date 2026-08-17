@@ -262,6 +262,8 @@ export function transformAd(ad, insights, creative) {
     type: adType,
     adGroupName: safeString(ad.adset_name || 'N/A'),
     campaignName: safeString(ad.campaign_name || 'N/A'),
+    adSetId: ad.adset_id,
+    campaignId: ad.campaign_id,
     clicks: transformedInsights.clicks,
     impressions: transformedInsights.impressions,
     cost: cost,
@@ -306,7 +308,9 @@ export function transformAds(ads, insightsMap, creativesMap) {
     return [];
   }
   
-  return ads.map(ad => 
-    transformAd(ad, insightsMap?.[ad.id], creativesMap?.[ad.id])
-  );
+  return ads.map(ad => {
+    const creativeId = ad.creative?.id || ad.raw?.creative?.id;
+    const creativeObj = creativesMap?.[creativeId] || creativesMap?.[ad.id] || null;
+    return transformAd(ad, insightsMap?.[ad.id], creativeObj);
+  });
 }

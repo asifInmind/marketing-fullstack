@@ -302,7 +302,9 @@ router.get('/', async (req, res) => {
                   id: m.adSetId,
                   name: m.adSetName,
                   status: m.adSetStatus,
-                  targeting: parsedTargeting
+                  targeting: parsedTargeting,
+                  campaign_id: m.campaignId,
+                  campaign_name: m.campaignName
                 };
               }
               adsList.push({
@@ -325,7 +327,9 @@ router.get('/', async (req, res) => {
                   url_tags: m.creative.destinationUrl, // Frontend looks here for click links
                   final_url: m.creative.destinationUrl, // Frontend fallback checks final_url
                   call_to_action: m.creative.callToAction,
-                  format: m.creative.format
+                  format: m.creative.format,
+                  headline: m.creative.headline,
+                  description: m.creative.description
                 };
               }
             });
@@ -466,36 +470,52 @@ router.get('/', async (req, res) => {
         data.ads.forEach(ad => {
           const campaign = data.campaigns?.find(c => c.id === ad.campaign_id) || {};
           const adSet = data.adSets?.find(s => s.id === ad.adset_id) || {};
-          const creative = data.creatives?.[ad.id] || {};
+
+          // Enrich the live object so the response returned to the client contains these fields
+          ad.campaign_name = ad.campaign?.name || campaign.name || '';
+          ad.adset_name = ad.adset?.name || adSet.name || '';
+
+          const creativeId = ad.creative?.id;
+          const creative = creativeId ? (data.creatives?.[creativeId] || {}) : {};
+
+          const updateObj = {
+            storeUrl,
+            channel: 'meta',
+            campaignId: ad.campaign_id,
+            campaignName: ad.campaign?.name || campaign.name || ad.campaign_name || '',
+            campaignStatus: campaign.status || ad.campaign_status || '',
+            campaignObjective: campaign.objective || '',
+            adSetId: ad.adset_id,
+            adSetName: ad.adset?.name || adSet.name || ad.adset_name || '',
+            adSetStatus: adSet.status || ad.adset_status || '',
+            adSetTargeting: adSet.targeting ? JSON.stringify(adSet.targeting) : '',
+            adId: ad.id,
+            adName: ad.name,
+            adStatus: ad.status || '',
+            lastUpdated: new Date()
+          };
+
+          const hasCreativeContent = creative && (creative.name || creative.final_url || creative.body || creative.headline);
+          if (hasCreativeContent) {
+            updateObj.creative = {
+              creativeId: creativeId || '',
+              creativeName: creative.name || '',
+              thumbnailUrl: creative.thumbnail_url || '',
+              bodyText: creative.body || '',
+              destinationUrl: creative.final_url || '',
+              callToAction: creative.call_to_action || '',
+              format: creative.format || '',
+              headline: creative.headline || '',
+              description: creative.description || ''
+            };
+          } else {
+            updateObj['creative.creativeId'] = creativeId || '';
+          }
 
           cachePromises.push(
             AdMetadata.findOneAndUpdate(
               { adId: ad.id },
-              {
-                storeUrl,
-                channel: 'meta',
-                campaignId: ad.campaign_id,
-                campaignName: campaign.name || ad.campaign_name || '',
-                campaignStatus: campaign.status || ad.campaign_status || '',
-                campaignObjective: campaign.objective || '',
-                adSetId: ad.adset_id,
-                adSetName: adSet.name || ad.adset_name || '',
-                adSetStatus: adSet.status || ad.adset_status || '',
-                adSetTargeting: adSet.targeting ? JSON.stringify(adSet.targeting) : '',
-                adId: ad.id,
-                adName: ad.name,
-                adStatus: ad.status || '',
-                creative: {
-                  creativeId: ad.creative?.id || creative.id || '',
-                  creativeName: creative.name || '',
-                  thumbnailUrl: creative.thumbnail_url || '',
-                  bodyText: creative.body || '',
-                  destinationUrl: creative.url_tags || creative.destination_url || '',
-                  callToAction: creative.call_to_action || '',
-                  format: creative.format || ''
-                },
-                lastUpdated: new Date()
-              },
+              { $set: updateObj },
               { upsert: true, new: true }
             )
           );
@@ -632,18 +652,20 @@ router.post('/', async (req, res) => {
           const cachedCreatives = {};
 
           dbAds.forEach(m => {
-            const hasContent = m.creative?.destinationUrl || m.creative?.creativeName || m.creative?.bodyText;
+            const hasContent = m.creative?.destinationUrl || m.creative?.creativeName || m.creative?.bodyText || m.creative?.headline;
             if (m.creative && m.creative.creativeId && hasContent) {
               cachedCreatives[m.adId] = {
                 id: m.creative.creativeId,
-                name: m.creative.creativeName,
+                name: m.creative.creativeName || m.creative.headline || '',
                 thumbnail_url: m.creative.thumbnailUrl,
-                body: m.creative.bodyText,
+                body: m.creative.bodyText || m.creative.description || '',
                 destination_url: m.creative.destinationUrl,
                 url_tags: m.creative.destinationUrl,
                 final_url: m.creative.destinationUrl,
                 call_to_action: m.creative.callToAction,
-                format: m.creative.format
+                format: m.creative.format,
+                headline: m.creative.headline || m.creative.creativeName || '',
+                description: m.creative.description || m.creative.bodyText || ''
               };
             }
           });
@@ -670,7 +692,6 @@ router.post('/', async (req, res) => {
 
             // Cache live fetched creatives in the background
             const creativePromises = Object.entries(liveCreatives).map(([adId, creative]) => {
-              console.log(`[DEBUG Creatives Caching] adId=${adId}, creativeId=${creative.id}, final_url=${creative.final_url}, keys=${Object.keys(creative).join(', ')}`);
               return AdMetadata.findOneAndUpdate(
                 { adId },
                 {
@@ -681,7 +702,9 @@ router.post('/', async (req, res) => {
                     bodyText: creative.description || creative.body || '',
                     destinationUrl: creative.final_url || creative.url_tags || creative.destination_url || '',
                     callToAction: creative.call_to_action || '',
-                    format: creative.format || ''
+                    format: creative.format || '',
+                    headline: creative.headline || creative.name || '',
+                    description: creative.description || creative.body || ''
                   }
                 },
                 { upsert: false }

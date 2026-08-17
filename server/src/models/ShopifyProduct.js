@@ -28,6 +28,7 @@ const ShopifyProductSchema = new mongoose.Schema({
       variantId: String,
       title: String,
       price: Number,
+      sku: String,
       inventoryQuantity: Number
     }
   ]

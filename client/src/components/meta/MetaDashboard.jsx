@@ -25,6 +25,7 @@ import { MetaCampaignTable } from './MetaCampaignTable.jsx';
 import { MetaAdSetTable } from './MetaAdSetTable.jsx';
 import { MetaAdTable } from './MetaAdTable.jsx';
 import { MetaCampaignDetail } from './MetaCampaignDetail.jsx';
+import { MetaAdSetDetail } from './MetaAdSetDetail.jsx';
 import { MetaLoadMoreButton } from './MetaLoadMoreButton.jsx';
 import { DATE_RANGE_OPTIONS } from '../../lib/utils/constants.js';
 
@@ -36,6 +37,9 @@ export function MetaDashboard({ accessToken, accountId }) {
 
   const [selectedCampaignId, setSelectedCampaignId] = useState(null);
   const [showCampaignDetail, setShowCampaignDetail] = useState(false);
+
+  const [selectedAdSetId, setSelectedAdSetId] = useState(null);
+  const [showAdSetDetail, setShowAdSetDetail] = useState(false);
 
   const [shopifyAdFilter, setShopifyAdFilter] = useState('running');
   const [shopifyPerfSort, setShopifyPerfSort] = useState('best');
@@ -73,6 +77,7 @@ export function MetaDashboard({ accessToken, accountId }) {
     wastedBudgetAlerts,
     productPerformance,
     shopifySummary,
+    totalStoreProducts,
     nextPageInfo: shopifyNextPageInfo,
     loadingMore: shopifyLoadingMore,
     connectOauth,
@@ -80,25 +85,47 @@ export function MetaDashboard({ accessToken, accountId }) {
     disconnect: disconnectShopify,
     refresh: refreshShopify,
     loadMoreProducts,
-  } = useShopifyDashboard(ads, dateRange);
+  } = useShopifyDashboard(ads, dateRange, loading || loadingInsights);
 
   const [cardsViewMode, setCardsViewMode] = useState('comparison');
 
   const filteredAndSortedProducts = useMemo(() => {
-    // Filter strictly only products with active ad spend
-    const items = productPerformance.filter(item => item.adSpend > 0);
+    // Return all calculated products directly from backend report
+    let items = [...productPerformance];
 
-    // Sort by true ROAS (Best vs Worst)
+    // Filter by running ads if selected (must have active spend AND at least one ad currently ACTIVE today)
+    if (shopifyAdFilter === 'running') {
+      items = items.filter(item =>
+        item.adSpend > 0 && item.matchedAds?.some(ad => ad.status.toUpperCase() === 'ACTIVE')
+      );
+    }
+
+    // Sort by Meta ROAS (Best vs Worst)
     items.sort((a, b) => {
       if (shopifyPerfSort === 'best') {
-        return b.trueROAS - a.trueROAS;
+        return b.metaAttributedROAS - a.metaAttributedROAS;
       } else {
-        return a.trueROAS - b.trueROAS;
+        return a.metaAttributedROAS - b.metaAttributedROAS;
       }
     });
 
     return items;
-  }, [productPerformance, shopifyPerfSort]);
+  }, [productPerformance, shopifyPerfSort, shopifyAdFilter]);
+
+  const campaignNames = useMemo(() => {
+    if (!selectedProductPerformance) return [];
+    return Array.from(new Set(selectedProductPerformance.matchedAds?.map(ad => ad.campaignName).filter(Boolean)));
+  }, [selectedProductPerformance]);
+
+  const adSetNames = useMemo(() => {
+    if (!selectedProductPerformance) return [];
+    return Array.from(new Set(selectedProductPerformance.matchedAds?.map(ad => ad.adSetName || ad.adGroupName).filter(Boolean)));
+  }, [selectedProductPerformance]);
+
+  const adNames = useMemo(() => {
+    if (!selectedProductPerformance) return [];
+    return Array.from(new Set(selectedProductPerformance.matchedAds?.map(ad => ad.name).filter(Boolean)));
+  }, [selectedProductPerformance]);
 
   const currencyCode = isShopifyConnected ? (shopifySummary?.currency || 'USD') : 'USD';
 
@@ -129,6 +156,14 @@ export function MetaDashboard({ accessToken, accountId }) {
     ? adSets.filter(adSet => adSet.campaignId === selectedCampaignId)
     : adSets;
 
+  const selectedAdSet = selectedAdSetId
+    ? adSets.find(s => s.id === selectedAdSetId)
+    : null;
+
+  const filteredAds = selectedAdSetId
+    ? ads.filter(ad => ad.adSetId === selectedAdSetId)
+    : ads;
+
   const handleCampaignClick = (campaignId) => {
     setSelectedCampaignId(campaignId);
     setShowCampaignDetail(true);
@@ -139,9 +174,27 @@ export function MetaDashboard({ accessToken, accountId }) {
     setShowCampaignDetail(false);
   };
 
+  const handleAdSetClick = (adSetId) => {
+    setSelectedAdSetId(adSetId);
+    setShowAdSetDetail(true);
+  };
+
+  const handleBackFromAdSetDetail = () => {
+    setSelectedAdSetId(null);
+    setShowAdSetDetail(false);
+  };
+
   useEffect(() => {
     setCurrentTime(new Date().toLocaleString());
   }, []);
+
+  // Automatically load ad creatives when ads are loaded, updated, or when tab changes
+  useEffect(() => {
+    if (activeTab === 'ads' && ads && ads.length > 0) {
+      const adIds = ads.map(ad => ad.id);
+      loadCreatives(adIds);
+    }
+  }, [ads, activeTab, loadCreatives]);
 
   const handleDateRangeChange = (value) => {
     setSelectedDateRange(value);
@@ -196,7 +249,7 @@ export function MetaDashboard({ accessToken, accountId }) {
       {/* Token Expired Banner */}
       {tokenExpired && (
         <div className="bg-amber-50 dark:bg-amber-950 border-b border-amber-200 dark:border-amber-800 px-4 py-3">
-          <div className="max-w-7xl mx-auto flex items-center gap-3">
+          <div className="w-[90%] max-w-[1600px] mx-auto flex items-center gap-3">
             <span className="text-amber-500 text-xl">⚠️</span>
             <div className="flex-1">
               <p className="text-amber-800 dark:text-amber-200 font-semibold text-sm">
@@ -216,7 +269,7 @@ export function MetaDashboard({ accessToken, accountId }) {
         </div>
       )}
       <div className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 sticky top-0 z-10">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="w-[90%] max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between py-4 gap-4">
             <div>
               <div className="flex items-center gap-3">
@@ -300,8 +353,8 @@ export function MetaDashboard({ accessToken, accountId }) {
                 )}
               </div>
               <button
-                onClick={() => {
-                  refresh();
+                onClick={async () => {
+                  await refresh();
                   if (isShopifyConnected) refreshShopify();
                 }}
                 disabled={loading || loadingInsights || shopifyLoading}
@@ -314,8 +367,19 @@ export function MetaDashboard({ accessToken, accountId }) {
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
-        {showCampaignDetail && selectedCampaign ? (
+      <div className="w-[90%] max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+        {showAdSetDetail && selectedAdSet ? (
+          <MetaAdSetDetail
+            adSet={selectedAdSet}
+            ads={filteredAds}
+            loading={loading}
+            hasMore={hasMore.ads}
+            loadingMore={loadingMore.ads}
+            onLoadMore={() => loadMore('ads')}
+            onBack={handleBackFromAdSetDetail}
+            currencyCode={currencyCode}
+          />
+        ) : showCampaignDetail && selectedCampaign ? (
           <MetaCampaignDetail
             campaign={selectedCampaign}
             adSets={filteredAdSets}
@@ -324,6 +388,7 @@ export function MetaDashboard({ accessToken, accountId }) {
             loadingMore={loadingMore.adSets}
             onLoadMore={() => loadMore('adSets')}
             onBack={handleBackFromDetail}
+            onAdSetClick={handleAdSetClick}
             currencyCode={currencyCode}
           />
         ) : (
@@ -336,31 +401,28 @@ export function MetaDashboard({ accessToken, accountId }) {
                 <div className="inline-flex rounded-lg p-0.5 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700/80">
                   <button
                     onClick={() => setCardsViewMode('comparison')}
-                    className={`px-3 py-1 text-xs font-semibold rounded-md transition-all cursor-pointer ${
-                      cardsViewMode === 'comparison'
-                        ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
-                        : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
-                    }`}
+                    className={`px-3 py-1 text-xs font-semibold rounded-md transition-all cursor-pointer ${cardsViewMode === 'comparison'
+                      ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
+                      : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                      }`}
                   >
                     Comparison
                   </button>
                   <button
                     onClick={() => setCardsViewMode('meta')}
-                    className={`px-3 py-1 text-xs font-semibold rounded-md transition-all cursor-pointer ${
-                      cardsViewMode === 'meta'
-                        ? 'bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-sm'
-                        : 'text-slate-500 hover:text-slate-850 dark:hover:text-slate-200'
-                    }`}
+                    className={`px-3 py-1 text-xs font-semibold rounded-md transition-all cursor-pointer ${cardsViewMode === 'meta'
+                      ? 'bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-sm'
+                      : 'text-slate-500 hover:text-slate-850 dark:hover:text-slate-200'
+                      }`}
                   >
                     Meta Only
                   </button>
                   <button
                     onClick={() => setCardsViewMode('shopify')}
-                    className={`px-3 py-1 text-xs font-semibold rounded-md transition-all cursor-pointer ${
-                      cardsViewMode === 'shopify'
-                        ? 'bg-white dark:bg-slate-900 text-emerald-600 dark:text-emerald-400 shadow-sm'
-                        : 'text-slate-500 hover:text-slate-850 dark:hover:text-slate-200'
-                    }`}
+                    className={`px-3 py-1 text-xs font-semibold rounded-md transition-all cursor-pointer ${cardsViewMode === 'shopify'
+                      ? 'bg-white dark:bg-slate-900 text-emerald-600 dark:text-emerald-400 shadow-sm'
+                      : 'text-slate-500 hover:text-slate-850 dark:hover:text-slate-200'
+                      }`}
                   >
                     Shopify Only
                   </button>
@@ -376,62 +438,7 @@ export function MetaDashboard({ accessToken, accountId }) {
               viewMode={cardsViewMode}
             />
 
-            {isShopifyConnected && wastedBudgetAlerts.length > 0 && (
-              <div className="bg-red-500/10 border border-red-200 dark:border-red-800/60 rounded-2xl p-5 space-y-4">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 bg-red-500 text-white rounded-lg">
-                    <AlertTriangle className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h3 className="font-semibold text-red-800 dark:text-red-400">Wasted Ad Budget: Out-of-Stock Products</h3>
-                    <p className="text-xs text-red-600 dark:text-red-500">
-                      You are actively spending marketing budget on Meta Ads for products that are currently sold out on your Shopify store (synced via inMind).
-                    </p>
-                  </div>
-                </div>
 
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs border-collapse">
-                    <thead>
-                      <tr className="border-b border-red-200 dark:border-red-800/40 text-red-700 dark:text-red-400 font-semibold">
-                        <th className="py-2">Active Meta Ad</th>
-                        <th className="py-2">Campaign</th>
-                        <th className="py-2">Shopify Product</th>
-                        <th className="py-2 text-right">Spend Wasted</th>
-                        <th className="py-2 text-right">Clicks</th>
-                        <th className="py-2 text-center">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-red-200/50 dark:divide-red-800/20 text-red-900 dark:text-red-300">
-                      {wastedBudgetAlerts.map(alert => (
-                        <tr key={alert.adId} className="hover:bg-red-500/5">
-                          <td className="py-2.5 font-medium flex items-center gap-1">
-                            {alert.adName}
-                            {alert.adUrl && alert.adUrl !== '#' && (
-                              <a href={alert.adUrl} target="_blank" rel="noopener noreferrer" className="hover:text-red-950 dark:hover:text-white">
-                                <ExternalLink className="w-3.5 h-3.5 inline" />
-                              </a>
-                            )}
-                          </td>
-                          <td className="py-2.5">{alert.campaignName}</td>
-                          <td className="py-2.5">
-                            <span className="font-medium">{alert.productTitle}</span>
-                            <span className="block text-[10px] text-red-500/70">SKU: {alert.sku}</span>
-                          </td>
-                          <td className="py-2.5 text-right font-semibold">{formatShopifyCurrency(alert.spend)}</td>
-                          <td className="py-2.5 text-right font-medium">{alert.clicks}</td>
-                          <td className="py-2.5 text-center">
-                            <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-red-500 text-white uppercase animate-pulse">
-                              Out of Stock
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
 
             <div className="border-b border-slate-200 dark:border-slate-800">
               <nav className="flex gap-6">
@@ -515,6 +522,7 @@ export function MetaDashboard({ accessToken, accountId }) {
                   adSets={adSets}
                   loading={loading}
                   loadingInsights={loadingInsights}
+                  onAdSetClick={handleAdSetClick}
                   currencyCode={currencyCode}
                 />
                 <MetaLoadMoreButton
@@ -617,73 +625,97 @@ export function MetaDashboard({ accessToken, accountId }) {
                           <tr className="border-b border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 font-semibold bg-slate-50/50 dark:bg-slate-950/20">
                             <th className="p-4">Product Title (SKU)</th>
                             <th className="p-4">Inventory Level</th>
-                            <th className="p-4 text-right">Shopify Sales (Qty)</th>
-                            <th className="p-4 text-right">Shopify Revenue</th>
-                            <th className="p-4 text-right">Attributed Ad Spend</th>
-                            <th className="p-4 text-right">True Product ROAS</th>
+                            <th className="p-4 text-right">Ad Spend (Meta)</th>
+                            <th className="p-4 text-right">Meta Sales (Pixel)</th>
+                            <th className="p-4 text-right">Meta Sales (UTM)</th>
+                            <th className="p-4 text-right">Meta ROAS (Pixel)</th>
+                            <th className="p-4 text-right">Meta ROAS (UTM)</th>
                             {shopifyAdFilter === 'running' && <th className="p-4 text-center">Ads Performance</th>}
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 text-slate-700 dark:text-slate-300">
                           {filteredAndSortedProducts.length === 0 ? (
                             <tr>
-                              <td colSpan={shopifyAdFilter === 'running' ? 7 : 6} className="p-8 text-center text-slate-400">
+                              <td colSpan={shopifyAdFilter === 'running' ? 8 : 7} className="p-8 text-center text-slate-400">
                                 No products found matching your filters.
                               </td>
                             </tr>
                           ) : (
-                            filteredAndSortedProducts.map(item => (
-                              <tr key={item.productId} className="hover:bg-slate-50/50 dark:hover:bg-slate-950/10">
-                                <td className="p-4">
-                                  <div className="font-medium text-slate-900 dark:text-white">{item.productTitle}</div>
-                                  <div className="text-[10px] text-slate-400">SKU: {item.sku}</div>
-                                </td>
-                                <td className="p-4">
-                                  <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold ${item.inventoryQuantity <= 0
-                                    ? 'bg-red-500/10 text-red-600 dark:text-red-400'
-                                    : item.inventoryQuantity < 10
-                                      ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
-                                      : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
-                                    }`}>
-                                    {item.inventoryQuantity <= 0
-                                      ? 'Out of Stock'
-                                      : `${item.inventoryQuantity} in stock`}
-                                  </span>
-                                </td>
-                                <td className="p-4 text-right font-medium">{item.shopifySalesQuantity}</td>
-                                <td className="p-4 text-right font-semibold">{formatShopifyCurrency(item.shopifyRevenue)}</td>
-                                <td className="p-4 text-right font-semibold text-slate-500 dark:text-slate-400">{formatShopifyCurrency(item.adSpend)}</td>
-                                <td className="p-4 text-right">
-                                  <span className={`font-bold ${item.trueROAS > 2
-                                    ? 'text-emerald-500'
-                                    : item.trueROAS > 1
-                                      ? 'text-amber-500'
-                                      : item.adSpend > 0
-                                        ? 'text-red-500'
-                                        : 'text-slate-400'
-                                    }`}>
-                                    {item.adSpend > 0
-                                      ? `${item.trueROAS.toFixed(2)}x`
-                                      : 'No Ads'}
-                                  </span>
-                                </td>
-                                {shopifyAdFilter === 'running' && (
-                                  <td className="p-4 text-center">
-                                    {item.adSpend > 0 ? (
-                                      <button
-                                        onClick={() => setSelectedProductPerformance(item)}
-                                        className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-lg border border-blue-200 dark:border-blue-800/80 transition-all cursor-pointer shadow-sm animate-in fade-in"
-                                      >
-                                        <span>Audit Ad Performance</span>
-                                        <ArrowUpRight className="w-3.5 h-3.5" />
-                                      </button>
-                                    ) : (
-                                      <span className="text-slate-300 dark:text-slate-700 font-semibold">—</span>
-                                    )}
+                            filteredAndSortedProducts.map(item => {
+                              const utmRoas = item.adSpend > 0 ? item.metaRevenue / item.adSpend : 0;
+                              return (
+                                <tr key={item.productId} className="hover:bg-slate-50/50 dark:hover:bg-slate-950/10">
+                                  <td className="p-4">
+                                    <div className="font-medium text-slate-900 dark:text-white">{item.productTitle}</div>
+                                    <div className="text-[10px] text-slate-400">SKU: {item.sku}</div>
                                   </td>
-                                )}
-                              </tr>
-                            ))
+                                  <td className="p-4">
+                                    <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold ${item.inventoryQuantity <= 0
+                                      ? 'bg-red-500/10 text-red-600 dark:text-red-400'
+                                      : item.inventoryQuantity < 10
+                                        ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
+                                        : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                                      }`}>
+                                      {item.inventoryQuantity <= 0
+                                        ? 'Out of Stock'
+                                        : `${item.inventoryQuantity} in stock`}
+                                    </span>
+                                  </td>
+                                  <td className="p-4 text-right font-semibold text-slate-700 dark:text-slate-300">{formatShopifyCurrency(item.adSpend)}</td>
+                                  <td className="p-4 text-right">
+                                    <div className="font-semibold text-slate-900 dark:text-white">{formatShopifyCurrency(item.attributedRevenue)}</div>
+                                    <div className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">{item.attributedSales} sold</div>
+                                  </td>
+                                  <td className="p-4 text-right">
+                                    <div className="font-semibold text-slate-900 dark:text-white">{formatShopifyCurrency(item.metaRevenue)}</div>
+                                    <div className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">{item.metaSalesQuantity} sold</div>
+                                  </td>
+                                  <td className="p-4 text-right">
+                                    <span className={`font-bold ${item.metaAttributedROAS > 2
+                                      ? 'text-emerald-500'
+                                      : item.metaAttributedROAS > 1
+                                        ? 'text-amber-500'
+                                        : item.adSpend > 0
+                                          ? 'text-red-500'
+                                          : 'text-slate-400'
+                                      }`}>
+                                      {item.adSpend > 0
+                                        ? `${item.metaAttributedROAS.toFixed(2)}x`
+                                        : 'No Ads'}
+                                    </span>
+                                  </td>
+                                  <td className="p-4 text-right">
+                                    <span className={`font-bold ${utmRoas > 2
+                                      ? 'text-emerald-500'
+                                      : utmRoas > 1
+                                        ? 'text-amber-500'
+                                        : item.adSpend > 0
+                                          ? 'text-red-500'
+                                          : 'text-slate-400'
+                                      }`}>
+                                      {item.adSpend > 0
+                                        ? `${utmRoas.toFixed(2)}x`
+                                        : 'No Ads'}
+                                    </span>
+                                  </td>
+                                  {shopifyAdFilter === 'running' && (
+                                    <td className="p-4 text-center">
+                                      {item.adSpend > 0 ? (
+                                        <button
+                                          onClick={() => setSelectedProductPerformance(item)}
+                                          className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-lg border border-blue-200 dark:border-blue-800/80 transition-all cursor-pointer shadow-sm animate-in fade-in"
+                                        >
+                                          <span>Audit Ad Performance</span>
+                                          <ArrowUpRight className="w-3.5 h-3.5" />
+                                        </button>
+                                      ) : (
+                                        <span className="text-slate-300 dark:text-slate-700 font-semibold">—</span>
+                                      )}
+                                    </td>
+                                  )}
+                                </tr>
+                              );
+                            })
                           )}
                         </tbody>
                       </table>
@@ -696,7 +728,7 @@ export function MetaDashboard({ accessToken, accountId }) {
                     hasMore={!!shopifyNextPageInfo}
                     loading={shopifyLoadingMore}
                     onClick={loadMoreProducts}
-                    count={shopifyProducts.length}
+                    count={totalStoreProducts}
                     filteredCount={filteredAndSortedProducts.length}
                   />
                 )}
@@ -740,7 +772,7 @@ export function MetaDashboard({ accessToken, accountId }) {
           `}</style>
 
           <div
-            className="w-[80%] max-w-4xl bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 shadow-2xl flex flex-col h-full z-50 animate-slide-in"
+            className="w-[90%] max-w-[1500px] bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 shadow-2xl flex flex-col h-full z-50 animate-slide-in"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between p-5 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/20">
@@ -751,7 +783,7 @@ export function MetaDashboard({ accessToken, accountId }) {
                 <div className="flex flex-wrap items-center gap-2 mt-1.5 text-xs text-slate-500 dark:text-slate-400">
                   <span>SKU: {selectedProductPerformance.sku}</span>
                   <span>•</span>
-                  <span className={`font-semibold ${selectedProductPerformance.inventoryQuantity <= 0 ? 'text-red-500' : 'text-emerald-500'}`}>
+                  <span className={`font-semibold ${selectedProductPerformance.inventoryQuantity <= 0 ? 'text-red-500' : 'text-slate-600 dark:text-slate-300'}`}>
                     {selectedProductPerformance.inventoryQuantity <= 0 ? 'Out of Stock' : `${selectedProductPerformance.inventoryQuantity} in stock`}
                   </span>
                   <span>•</span>
@@ -770,18 +802,63 @@ export function MetaDashboard({ accessToken, accountId }) {
             </div>
 
             <div className="flex-1 overflow-y-auto p-6 space-y-6">
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div className="p-4 bg-slate-50 dark:bg-slate-950/30 rounded-xl border border-slate-100 dark:border-slate-800/40 shadow-sm">
-                  <div className="text-xs text-slate-500 dark:text-slate-400 font-medium">True ROAS</div>
+                  <div className="text-xs text-slate-500 dark:text-slate-400 font-medium">Meta ROAS (Pixel)</div>
+                  <div className={`text-2xl font-bold mt-1 ${selectedProductPerformance.metaAttributedROAS > 2 ? 'text-emerald-500' : selectedProductPerformance.metaAttributedROAS > 1 ? 'text-amber-500' : selectedProductPerformance.adSpend > 0 ? 'text-red-500' : 'text-slate-400'
+                    }`}>
+                    {selectedProductPerformance.adSpend > 0 ? `${selectedProductPerformance.metaAttributedROAS.toFixed(2)}x` : '—'}
+                  </div>
+                  <div className="text-[10px] text-slate-400 dark:text-slate-500 mt-1">Meta Pixel / Spend</div>
+                </div>
+
+                <div className="p-4 bg-slate-50 dark:bg-slate-950/30 rounded-xl border border-slate-100 dark:border-slate-800/40 shadow-sm">
+                  <div className="text-xs text-slate-500 dark:text-slate-400 font-medium">Meta ROAS (UTM)</div>
+                  {(() => {
+                    const utmRoas = selectedProductPerformance.adSpend > 0 ? selectedProductPerformance.metaRevenue / selectedProductPerformance.adSpend : 0;
+                    return (
+                      <>
+                        <div className={`text-2xl font-bold mt-1 ${utmRoas > 2 ? 'text-emerald-500' : utmRoas > 1 ? 'text-amber-500' : selectedProductPerformance.adSpend > 0 ? 'text-red-500' : 'text-slate-400'
+                          }`}>
+                          {selectedProductPerformance.adSpend > 0 ? `${utmRoas.toFixed(2)}x` : '—'}
+                        </div>
+                        <div className="text-[10px] text-slate-400 dark:text-slate-500 mt-1">Facebook UTM / Spend</div>
+                      </>
+                    );
+                  })()}
+                </div>
+
+                <div className="p-4 bg-slate-50 dark:bg-slate-950/30 rounded-xl border border-slate-100 dark:border-slate-800/40 shadow-sm">
+                  <div className="text-xs text-slate-500 dark:text-slate-400 font-medium">Blended ROAS</div>
                   <div className={`text-2xl font-bold mt-1 ${selectedProductPerformance.trueROAS > 2 ? 'text-emerald-500' : selectedProductPerformance.trueROAS > 1 ? 'text-amber-500' : selectedProductPerformance.adSpend > 0 ? 'text-red-500' : 'text-slate-400'
                     }`}>
                     {selectedProductPerformance.adSpend > 0 ? `${selectedProductPerformance.trueROAS.toFixed(2)}x` : '—'}
                   </div>
-                  <div className="text-[10px] text-slate-400 dark:text-slate-500 mt-1">Total Revenue / Spend</div>
+                  <div className="text-[10px] text-slate-400 dark:text-slate-500 mt-1">Overall Store ROAS</div>
                 </div>
 
                 <div className="p-4 bg-slate-50 dark:bg-slate-950/30 rounded-xl border border-slate-100 dark:border-slate-800/40 shadow-sm">
-                  <div className="text-xs text-slate-500 dark:text-slate-400 font-medium">Shopify Sales Revenue</div>
+                  <div className="text-xs text-slate-500 dark:text-slate-400 font-medium">Meta Sales (Pixel)</div>
+                  <div className="text-2xl font-bold text-slate-900 dark:text-white mt-1">
+                    {formatShopifyCurrency(selectedProductPerformance.attributedRevenue)}
+                  </div>
+                  <div className="text-[10px] text-slate-400 dark:text-slate-500 mt-1">
+                    {selectedProductPerformance.attributedSales} sales conversions
+                  </div>
+                </div>
+
+                <div className="p-4 bg-slate-50 dark:bg-slate-950/30 rounded-xl border border-slate-100 dark:border-slate-800/40 shadow-sm">
+                  <div className="text-xs text-slate-500 dark:text-slate-400 font-medium">Meta Sales (UTM)</div>
+                  <div className="text-2xl font-bold text-slate-900 dark:text-white mt-1">
+                    {formatShopifyCurrency(selectedProductPerformance.metaRevenue)}
+                  </div>
+                  <div className="text-[10px] text-slate-400 dark:text-slate-500 mt-1">
+                    {selectedProductPerformance.metaSalesQuantity} sales conversions
+                  </div>
+                </div>
+
+                <div className="p-4 bg-slate-50 dark:bg-slate-950/30 rounded-xl border border-slate-100 dark:border-slate-800/40 shadow-sm">
+                  <div className="text-xs text-slate-500 dark:text-slate-400 font-medium">Total Sales (All Channels)</div>
                   <div className="text-2xl font-bold text-slate-900 dark:text-white mt-1">
                     {formatShopifyCurrency(selectedProductPerformance.shopifyRevenue)}
                   </div>
@@ -796,21 +873,17 @@ export function MetaDashboard({ accessToken, accountId }) {
                     {formatShopifyCurrency(selectedProductPerformance.adSpend)}
                   </div>
                   <div className="text-[10px] text-slate-400 dark:text-slate-500 mt-1">
-                    From {selectedProductPerformance.matchedAds?.length || 0} active ads
+                    {selectedProductPerformance.firstActiveDate && selectedProductPerformance.lastActiveDate ? (
+                      <span className="text-blue-600 dark:text-blue-400 font-semibold text-[9px]">
+                        Active: {new Date(selectedProductPerformance.firstActiveDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} - {new Date(selectedProductPerformance.lastActiveDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                      </span>
+                    ) : (
+                      `From ${selectedProductPerformance.matchedAds?.length || 0} active ads`
+                    )}
                   </div>
                 </div>
 
                 <div className="p-4 bg-slate-50 dark:bg-slate-950/30 rounded-xl border border-slate-100 dark:border-slate-800/40 shadow-sm">
-                  <div className="text-xs text-slate-500 dark:text-slate-400 font-medium">Attributed Sales Rev.</div>
-                  <div className="text-2xl font-bold text-slate-900 dark:text-white mt-1">
-                    {formatShopifyCurrency(selectedProductPerformance.attributedRevenue)}
-                  </div>
-                  <div className="text-[10px] text-slate-400 dark:text-slate-500 mt-1">
-                    {selectedProductPerformance.attributedSales} sales conversions
-                  </div>
-                </div>
-
-                <div className="p-4 bg-slate-50 dark:bg-slate-950/30 rounded-xl border border-slate-100 dark:border-slate-800/40 col-span-2 md:col-span-1 shadow-sm">
                   <div className="text-xs text-slate-500 dark:text-slate-400 font-medium">Ad Clicks</div>
                   <div className="text-2xl font-bold text-slate-900 dark:text-white mt-1">
                     {selectedProductPerformance.adClicks}
@@ -820,6 +893,53 @@ export function MetaDashboard({ accessToken, accountId }) {
                   </div>
                 </div>
               </div>
+
+              {/* Connected Campaign Structure Details */}
+              {selectedProductPerformance.matchedAds?.length > 0 && (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="p-4 bg-slate-50 dark:bg-slate-950/30 rounded-xl border border-slate-200/60 dark:border-slate-800/40 shadow-sm flex flex-col justify-between min-h-[140px]">
+                    <div>
+                      <div className="text-[10px] text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider mb-2.5">Connected Campaigns</div>
+                      <div className="space-y-1.5 max-h-[160px] overflow-y-auto pr-1">
+                        {campaignNames.map((name, idx) => (
+                          <div key={idx} className="text-xs font-semibold text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-900 border border-slate-200/60 dark:border-slate-800/80 px-2.5 py-1.5 rounded-lg shadow-sm leading-relaxed break-words" title={name}>
+                            {name}
+                          </div>
+                        ))}
+                        {campaignNames.length === 0 && <div className="text-xs text-slate-400 italic">No campaigns linked</div>}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="p-4 bg-slate-50 dark:bg-slate-950/30 rounded-xl border border-slate-100 dark:border-slate-800/40 shadow-sm flex flex-col justify-between min-h-[140px]">
+                    <div>
+                      <div className="text-[10px] text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider mb-2.5">Connected Ad Sets</div>
+                      <div className="space-y-1.5 max-h-[160px] overflow-y-auto pr-1">
+                        {adSetNames.map((name, idx) => (
+                          <div key={idx} className="text-xs font-semibold text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-900 border border-slate-200/60 dark:border-slate-800/80 px-2.5 py-1.5 rounded-lg shadow-sm leading-relaxed break-words" title={name}>
+                            {name}
+                          </div>
+                        ))}
+                        {adSetNames.length === 0 && <div className="text-xs text-slate-400 italic">No ad sets linked</div>}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="p-4 bg-slate-50 dark:bg-slate-950/30 rounded-xl border border-slate-100 dark:border-slate-800/40 shadow-sm flex flex-col justify-between min-h-[140px]">
+                    <div>
+                      <div className="text-[10px] text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider mb-2.5">Connected Ads</div>
+                      <div className="space-y-1.5 max-h-[160px] overflow-y-auto pr-1">
+                        {adNames.map((name, idx) => (
+                          <div key={idx} className="text-xs font-semibold text-slate-800 dark:text-slate-200 bg-white dark:bg-slate-900 border border-slate-200/60 dark:border-slate-800/80 px-2.5 py-1.5 rounded-lg shadow-sm leading-relaxed break-words" title={name}>
+                            {name}
+                          </div>
+                        ))}
+                        {adNames.length === 0 && <div className="text-xs text-slate-400 italic">No ads linked</div>}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <div>
                 <h3 className="text-sm font-bold text-slate-900 dark:text-white mb-3 flex items-center gap-2">
@@ -862,12 +982,35 @@ export function MetaDashboard({ accessToken, accountId }) {
                                 </div>
                               </td>
                               <td className="p-3 text-center">
-                                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${ad.status.toUpperCase() === 'ACTIVE'
-                                  ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
-                                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
-                                  }`}>
-                                  {ad.status.toUpperCase()}
-                                </span>
+                                <div className="flex flex-col items-center gap-1">
+                                  <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${ad.status.toUpperCase() === 'ACTIVE'
+                                    ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                                    : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
+                                    }`}>
+                                    {ad.status.toUpperCase()}
+                                  </span>
+                                  {(() => {
+                                    if (ad.status.toUpperCase() !== 'ACTIVE') return null;
+                                    const today = new Date();
+                                    const lastDate = ad.lastActiveDate ? new Date(ad.lastActiveDate) : null;
+                                    const daysSinceLastSpend = lastDate ? Math.floor((today - lastDate) / (1000 * 60 * 60 * 24)) : null;
+                                    
+                                    if (ad.cost === 0) {
+                                      return (
+                                        <span className="text-[9px] text-amber-600 dark:text-amber-400 font-medium flex items-center gap-0.5 whitespace-nowrap" title="No budget has been spent on this ad during the selected range. Check Ads Manager for budget cap or bid issues.">
+                                          ⚠️ No spend
+                                        </span>
+                                      );
+                                    } else if (daysSinceLastSpend !== null && daysSinceLastSpend > 3) {
+                                      return (
+                                        <span className="text-[9px] text-amber-600 dark:text-amber-400 font-medium flex items-center gap-0.5 whitespace-nowrap" title={`This active ad has stopped spending budget since ${new Date(ad.lastActiveDate).toLocaleDateString(undefined, {month: 'short', day: 'numeric'})}. Check Meta billing or account limits.`}>
+                                          ⚠️ Frozen {daysSinceLastSpend}d
+                                        </span>
+                                      );
+                                    }
+                                    return null;
+                                  })()}
+                                </div>
                               </td>
                               <td className="p-3 text-right font-medium">{formatShopifyCurrency(ad.cost || 0)}</td>
                               <td className="p-3 text-right">{ad.impressions?.toLocaleString() || '—'}</td>
@@ -894,6 +1037,165 @@ export function MetaDashboard({ accessToken, accountId }) {
                     </table>
                   </div>
                 )}
+
+                {/* Daily Spend Breakdown Log */}
+                {selectedProductPerformance.matchedAds?.some(ad => ad.dailySpendBreakdown?.length > 0) && (
+                  <div className="mt-6">
+                    <h3 className="text-sm font-bold text-slate-900 dark:text-white mb-3 flex items-center gap-2">
+                      <Calendar className="w-4 h-4 text-emerald-500" />
+                      Daily Ad Spend Timeline
+                    </h3>
+                    <div className="border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm bg-white dark:bg-slate-900/40">
+                      <div className="max-h-[250px] overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800/60">
+                        <table className="w-full text-left text-xs border-collapse">
+                          <thead>
+                            <tr className="border-b border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 font-semibold bg-slate-50/50 dark:bg-slate-950/20 sticky top-0">
+                              <th className="p-3">Date</th>
+                              <th className="p-3">Ad Source</th>
+                              <th className="p-3 text-right">Spend</th>
+                              <th className="p-3 text-right">Clicks</th>
+                              <th className="p-3 text-right">Meta Conv.</th>
+                              <th className="p-3 text-right">Shopify Conv.</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 text-slate-700 dark:text-slate-300">
+                            {selectedProductPerformance.matchedAds.flatMap(ad =>
+                              (ad.dailySpendBreakdown || []).map(day => ({
+                                ...day,
+                                adName: ad.name
+                              }))
+                            )
+                              .sort((a, b) => new Date(b.date) - new Date(a.date))
+                              .map((day, idx) => (
+                                <tr key={idx} className="hover:bg-slate-50/30 dark:hover:bg-slate-950/5">
+                                  <td className="p-3 font-medium text-slate-900 dark:text-white">
+                                    {new Date(day.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                                  </td>
+                                  <td className="p-3 text-slate-500 truncate max-w-[150px]" title={day.adName}>
+                                    {day.adName}
+                                  </td>
+                                  <td className="p-3 text-right font-semibold text-slate-800 dark:text-slate-200">
+                                    {formatShopifyCurrency(day.spend)}
+                                  </td>
+                                  <td className="p-3 text-right">{day.clicks}</td>
+                                  <td className="p-3 text-right font-medium text-emerald-600 dark:text-emerald-400">{day.conversions}</td>
+                                  <td className="p-3 text-right font-medium text-blue-600 dark:text-blue-400" title={`Attributed Shopify Conversions: ${day.shopifyConversions || 0} orders (${day.shopifyQuantity || 0} items)`}>
+                                    {day.shopifyConversions || 0}
+                                  </td>
+                                </tr>
+                              ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Shopify Attributed Orders Verification Log */}
+                {selectedProductPerformance.matchedOrders?.length > 0 && (
+                  <div className="mt-6">
+                    <h3 className="text-sm font-bold text-slate-900 dark:text-white mb-3 flex items-center gap-2">
+                      <ShoppingBag className="w-4 h-4 text-blue-500" />
+                      Shopify Attributed Orders Verification ({selectedProductPerformance.matchedOrders.length})
+                    </h3>
+                    <div className="border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm bg-white dark:bg-slate-900/40">
+                      <div className="max-h-[250px] overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800/60">
+                        <table className="w-full text-left text-xs border-collapse">
+                          <thead>
+                            <tr className="border-b border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 font-semibold bg-slate-50/50 dark:bg-slate-950/20 sticky top-0">
+                              <th className="p-3">Order</th>
+                              <th className="p-3">Date</th>
+                              <th className="p-3">Customer</th>
+                              <th className="p-3 text-right">Items</th>
+                              <th className="p-3 text-right">Item Price</th>
+                              <th className="p-3 text-right">Total Price</th>
+                              <th className="p-3">Attribution Source</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 text-slate-700 dark:text-slate-300">
+                            {selectedProductPerformance.matchedOrders
+                              .slice()
+                              .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+                              .map((order, idx) => {
+                                // Match order details to the product's matched Meta Ads to audit status
+                                const matchedAd = selectedProductPerformance.matchedAds?.find(ad => {
+                                  const contentMatch = order.utmContent && ad.name?.toLowerCase().trim() === order.utmContent.toLowerCase().trim();
+                                  const campaignMatch = order.utmCampaign && ad.campaignName?.toLowerCase().trim() === order.utmCampaign.toLowerCase().trim();
+                                  return contentMatch || campaignMatch;
+                                });
+
+                                const adStatus = matchedAd ? matchedAd.status : null;
+                                const adName = matchedAd ? matchedAd.name : null;
+                                const campaignName = matchedAd ? matchedAd.campaignName : null;
+
+                                return (
+                                  <tr key={idx} className="hover:bg-slate-50/30 dark:hover:bg-slate-950/5">
+                                    <td className="p-3 font-semibold text-blue-600 dark:text-blue-400">
+                                      {order.orderNumber || `#${order.orderId.slice(-6)}`}
+                                    </td>
+                                    <td className="p-3 text-slate-500">
+                                      {new Date(order.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                                    </td>
+                                    <td className="p-3 text-slate-600 dark:text-slate-400 truncate max-w-[150px]" title={order.email}>
+                                      {order.email}
+                                    </td>
+                                    <td className="p-3 text-right font-medium">{order.quantity}</td>
+                                    <td className="p-3 text-right">{formatShopifyCurrency(order.price)}</td>
+                                    <td className="p-3 text-right font-bold text-slate-900 dark:text-white">{formatShopifyCurrency(order.totalPrice)}</td>
+                                    <td className="p-3">
+                                      <div className="flex flex-col gap-1.5">
+                                        <div className="flex flex-wrap gap-1">
+                                          {order.utmSource && (
+                                            <span className="px-2 py-0.5 rounded bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 font-semibold text-[9px] uppercase border border-emerald-100 dark:border-emerald-900/30">
+                                              utm_src: {order.utmSource}
+                                            </span>
+                                          )}
+                                          {order.utmCampaign && (
+                                            <span className="px-2 py-0.5 rounded bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 font-semibold text-[9px] uppercase border border-blue-100 dark:border-blue-900/30 truncate max-w-[120px]" title={order.utmCampaign}>
+                                              campaign: {order.utmCampaign}
+                                            </span>
+                                          )}
+                                          {order.clickId && (
+                                            <span className="px-2 py-0.5 rounded bg-purple-50 dark:bg-purple-950/40 text-purple-700 dark:text-purple-300 font-semibold text-[9px] uppercase border border-purple-100 dark:border-purple-900/30 truncate max-w-[100px]" title={order.clickId}>
+                                              fbclid
+                                            </span>
+                                          )}
+                                          {!order.utmSource && !order.utmCampaign && !order.clickId && (
+                                            <span className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 text-[9px] font-semibold">
+                                              organic facebook ref
+                                            </span>
+                                          )}
+                                        </div>
+
+                                        {/* Dynamic connection status helper */}
+                                        {matchedAd ? (
+                                          <div className="flex items-center gap-1.5 mt-0.5 bg-slate-50 dark:bg-slate-950/40 px-2 py-1 rounded border border-slate-200/60 dark:border-slate-800/40 w-fit">
+                                            <span className={`w-1.5 h-1.5 rounded-full ${adStatus?.toUpperCase() === 'ACTIVE' ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`} />
+                                            <span className={`text-[10px] font-bold ${adStatus?.toUpperCase() === 'ACTIVE' ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-500'}`}>
+                                              {adStatus?.toUpperCase() === 'ACTIVE' ? 'Active Ad' : 'Paused Ad'}: {adName || campaignName}
+                                            </span>
+                                          </div>
+                                        ) : (
+                                          (order.utmCampaign || order.utmContent) && (
+                                            <div className="flex items-center gap-1.5 mt-0.5 text-slate-400 dark:text-slate-500">
+                                              <span className="w-1.5 h-1.5 rounded-full bg-slate-300 dark:bg-slate-700" />
+                                              <span className="text-[10px] font-semibold italic">
+                                                Old / Deleted Ad Campaign
+                                              </span>
+                                            </div>
+                                          )
+                                        )}
+                                      </div>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -913,8 +1215,8 @@ export function MetaDashboard({ accessToken, accountId }) {
                       </thead>
                       <tbody className="divide-y divide-slate-50 dark:divide-slate-800/40">
                         {(() => {
-                          const rawProduct = shopifyProducts.find(p => p.id === selectedProductPerformance.productId);
-                          if (!rawProduct || !rawProduct.variants || rawProduct.variants.length === 0) {
+                          const variants = selectedProductPerformance.variants || [];
+                          if (variants.length === 0) {
                             return (
                               <tr>
                                 <td colSpan={3} className="py-4 text-center text-slate-400">
@@ -923,7 +1225,7 @@ export function MetaDashboard({ accessToken, accountId }) {
                               </tr>
                             );
                           }
-                          return rawProduct.variants.map((v) => (
+                          return variants.map((v) => (
                             <tr key={v.id}>
                               <td className="py-2.5 font-medium text-slate-700 dark:text-slate-300">
                                 <div>{v.title || 'Default'}</div>
@@ -931,13 +1233,13 @@ export function MetaDashboard({ accessToken, accountId }) {
                               </td>
                               <td className="py-2.5 text-right font-medium">{formatShopifyCurrency(parseFloat(v.price))}</td>
                               <td className="py-2.5 text-right">
-                                <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold ${(v.inventory_quantity || 0) <= 0
+                                <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold ${(v.inventoryQuantity || 0) <= 0
                                   ? 'bg-red-500/10 text-red-600 dark:text-red-400'
-                                  : (v.inventory_quantity || 0) < 10
+                                  : (v.inventoryQuantity || 0) < 10
                                     ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
                                     : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
                                   }`}>
-                                  {v.inventory_quantity || 0} left
+                                  {v.inventoryQuantity || 0} left
                                 </span>
                               </td>
                             </tr>

@@ -142,6 +142,14 @@ export function MetaMetricCards({
     ? `${blendedROAS.toFixed(2)}x`
     : '0.00x';
 
+  const attributedROAS = shopifySummary && summary?.totalSpend && summary.totalSpend > 0
+    ? (shopifySummary.metaRevenue || 0) / summary.totalSpend
+    : 0;
+
+  const attributedROASDisplay = attributedROAS > 0
+    ? `${attributedROAS.toFixed(2)}x`
+    : '0.00x';
+
   const aov = shopifySummary && shopifySummary.totalOrders > 0
     ? shopifySummary.totalRevenue / shopifySummary.totalOrders
     : 0;
@@ -266,22 +274,22 @@ export function MetaMetricCards({
       <MetricCard
         title="Spend & Orders"
         value={formatCurrency(summary?.totalSpend || 0, activeCurrency)}
-        secondaryTitle="Store Orders"
-        secondaryValue={shopifySummary?.totalOrders}
+        secondaryTitle="Meta Orders"
+        secondaryValue={shopifySummary?.metaOrdersCount || 0}
         icon={DollarSign}
         color="bg-emerald-500"
         loading={loading}
-        subtitle="Meta Spend vs Shopify Orders"
+        subtitle="Meta Spend vs Shopify-Attributed Orders"
       />
       <MetricCard
         title="Traffic & Buyers"
         value={summary?.totalClicks || 0}
-        secondaryTitle="Store Customers"
-        secondaryValue={shopifySummary?.totalCustomers}
+        secondaryTitle="Meta Customers"
+        secondaryValue={shopifySummary?.metaCustomersCount || 0}
         icon={MousePointerClick}
         color="bg-blue-500"
         loading={loading}
-        subtitle="Meta Ad Clicks vs Shopify Buyers"
+        subtitle="Meta Clicks vs Shopify-Attributed Buyers"
       />
       <MetricCard
         title="Ad Impressions"
@@ -294,32 +302,32 @@ export function MetaMetricCards({
       <MetricCard
         title="Conversions Audit"
         value={summary?.totalConversions || 0}
-        secondaryTitle="Store Orders"
-        secondaryValue={shopifySummary?.totalOrders}
+        secondaryTitle="Meta Orders"
+        secondaryValue={shopifySummary?.metaOrdersCount || 0}
         icon={Target}
         color="bg-amber-500"
         loading={loading}
-        subtitle="Pixel Conversions vs Shopify Orders"
+        subtitle="Pixel Purchases vs Shopify-Attributed Orders"
       />
       <MetricCard
         title="Revenue Audit"
         value={formatCurrency(summary?.totalRevenue || 0, activeCurrency)}
-        secondaryTitle="Store Revenue"
-        secondaryValue={formatCurrency(shopifySummary?.totalRevenue || 0, activeCurrency)}
+        secondaryTitle="Meta Revenue"
+        secondaryValue={formatCurrency(shopifySummary?.metaRevenue || 0, activeCurrency)}
         icon={Wallet}
         color="bg-indigo-500"
         loading={loading}
-        subtitle="Attributed Sales vs Store Revenue"
+        subtitle="Pixel Revenue vs Shopify-Attributed Revenue"
       />
       <MetricCard
         title="ROAS Comparison"
         value={roasDisplay}
-        secondaryTitle="Blended ROAS (MER)"
-        secondaryValue={blendedROASDisplay}
+        secondaryTitle="Meta ROAS"
+        secondaryValue={attributedROASDisplay}
         icon={Percent}
         color="bg-violet-600"
         loading={loading}
-        subtitle="Pixel ROAS vs Blended ROAS (MER)"
+        subtitle="Pixel ROAS vs Shopify-Attributed ROAS"
       />
     </div>
   );

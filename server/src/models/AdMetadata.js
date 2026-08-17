@@ -61,7 +61,9 @@ const AdMetadataSchema = new mongoose.Schema({
     bodyText: String,
     destinationUrl: String,
     callToAction: String,
-    format: String
+    format: String,
+    headline: String,
+    description: String
   },
   lastUpdated: {
     type: Date,
