@@ -9,17 +9,43 @@ export const MetaAdTable = React.memo(function MetaAdTable({
   loading, 
   loadingInsights = false, 
   loadingCreatives,
-  currencyCode = 'USD'
+  currencyCode = 'USD',
+  unmatchedAds = []
 }) {
   const [currentPage, setCurrentPage] = useState(1);
+  const [filter, setFilter] = useState('all');
   const itemsPerPage = 20;
 
-  const paginatedAds = ads.slice(
+  const filteredAds = React.useMemo(() => {
+    switch (filter) {
+      case 'active':
+        return ads.filter(a => a.status === 'ENABLED' || a.status === 'ACTIVE');
+      case 'spending':
+        return ads.filter(a => (a.cost || a.spend || 0) > 0);
+      case 'active_spending':
+        return ads.filter(a => {
+          const isActive = a.status === 'ENABLED' || a.status === 'ACTIVE';
+          const hasSpend = (a.cost || a.spend || 0) > 0;
+          return isActive && hasSpend;
+        });
+      case 'unmatched':
+        const unmatchedIds = new Set(unmatchedAds.map(ua => ua.id));
+        return ads.filter(a => unmatchedIds.has(a.id));
+      default:
+        return ads;
+    }
+  }, [ads, filter, unmatchedAds]);
+
+  React.useEffect(() => {
+    setCurrentPage(1);
+  }, [filter]);
+
+  const paginatedAds = filteredAds.slice(
     (currentPage - 1) * itemsPerPage,
     currentPage * itemsPerPage
   );
 
-  const totalPages = Math.ceil(ads.length / itemsPerPage);
+  const totalPages = Math.ceil(filteredAds.length / itemsPerPage);
   const formatVal = (amount) => {
     try {
       return new Intl.NumberFormat('en-US', {
@@ -59,16 +85,61 @@ export const MetaAdTable = React.memo(function MetaAdTable({
             )}
           </div>
           <div className="flex flex-wrap items-center gap-2 text-[11px] md:text-xs">
-            <span className="px-2.5 py-1 rounded-md bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-medium">
+            <button
+              onClick={() => setFilter('all')}
+              className={`px-2.5 py-1 rounded-md font-medium cursor-pointer transition-all border ${
+                filter === 'all'
+                  ? 'bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-100 border-slate-350 dark:border-slate-700 shadow-sm'
+                  : 'bg-transparent text-slate-500 border-transparent hover:bg-slate-50 dark:hover:bg-slate-850'
+              }`}
+            >
+              All: {ads.length}
+            </button>
+            <button
+              onClick={() => setFilter(filter === 'active' ? 'all' : 'active')}
+              className={`px-2.5 py-1 rounded-md font-medium cursor-pointer transition-all border ${
+                filter === 'active'
+                  ? 'bg-emerald-500 text-white border-emerald-500 shadow-sm'
+                  : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-transparent hover:bg-emerald-500/20'
+              }`}
+            >
               Active: {ads.filter(a => a.status === 'ENABLED' || a.status === 'ACTIVE').length}
-            </span>
-            <span className="px-2.5 py-1 rounded-md bg-blue-500/10 text-blue-600 dark:text-blue-400 font-medium">
-              Spending: {ads.filter(a => a.cost > 0).length}
-            </span>
-            <span className="px-2.5 py-1 rounded-md bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 font-medium flex items-center gap-1 cursor-help" title="Ads that are active and have spent budget in this range. Note: Ads that have not spent budget in the last 3 days (frozen ads) are filtered out of the Shopify product performance engine.">
-              Active & Spending: {ads.filter(a => (a.status === 'ENABLED' || a.status === 'ACTIVE') && a.cost > 0).length}
-              <span className="text-[10px] text-indigo-400">ℹ️</span>
-            </span>
+            </button>
+            <button
+              onClick={() => setFilter(filter === 'spending' ? 'all' : 'spending')}
+              className={`px-2.5 py-1 rounded-md font-medium cursor-pointer transition-all border ${
+                filter === 'spending'
+                  ? 'bg-blue-500 text-white border-blue-500 shadow-sm'
+                  : 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-transparent hover:bg-blue-500/20'
+              }`}
+            >
+              Spending: {ads.filter(a => (a.cost || a.spend || 0) > 0).length}
+            </button>
+            <button
+              onClick={() => setFilter(filter === 'active_spending' ? 'all' : 'active_spending')}
+              className={`px-2.5 py-1 rounded-md font-medium cursor-pointer transition-all border flex items-center gap-1 cursor-help ${
+                filter === 'active_spending'
+                  ? 'bg-indigo-500 text-white border-indigo-500 shadow-sm'
+                  : 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-transparent hover:bg-indigo-500/20'
+              }`}
+              title="Ads that are active and have spent budget in this range. Note: Ads that have not spent budget in the last 3 days (frozen ads) are filtered out of the Shopify product performance engine."
+            >
+              Active & Spending: {ads.filter(a => (a.status === 'ENABLED' || a.status === 'ACTIVE') && (a.cost || a.spend || 0) > 0).length}
+              <span className={filter === 'active_spending' ? 'text-indigo-200' : 'text-indigo-400'}>ℹ️</span>
+            </button>
+            {unmatchedAds.length > 0 && (
+              <button
+                onClick={() => setFilter(filter === 'unmatched' ? 'all' : 'unmatched')}
+                className={`px-2.5 py-1 rounded-md font-medium cursor-pointer transition-all border ${
+                  filter === 'unmatched'
+                    ? 'bg-rose-500 text-white border-rose-500 shadow-sm'
+                    : 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-transparent hover:bg-rose-500/20'
+                }`}
+                title="Meta ads that spent budget but do not point to a specific Shopify product page (pointing to Homepage or Collection pages)."
+              >
+                Unmatched: {unmatchedAds.length}
+              </button>
+            )}
           </div>
         </div>
       </div>

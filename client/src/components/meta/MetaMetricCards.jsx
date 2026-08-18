@@ -154,6 +154,10 @@ export function MetaMetricCards({
     ? shopifySummary.totalRevenue / shopifySummary.totalOrders
     : 0;
 
+  const metaAov = shopifySummary && shopifySummary.metaOrdersCount > 0
+    ? shopifySummary.metaRevenue / shopifySummary.metaOrdersCount
+    : 0;
+
   const getROASSubtitle = (roas) => {
     if (roas === 0) return 'No revenue yet';
     if (roas > 3) return 'Excellent ROI';
@@ -225,44 +229,44 @@ export function MetaMetricCards({
     return (
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <MetricCard
-          title="Store Revenue"
-          value={formatCurrency(shopifySummary?.totalRevenue || 0, activeCurrency)}
+          title="Shopify Sales"
+          value={formatCurrency(shopifySummary?.metaRevenue || 0, activeCurrency)}
           icon={Wallet}
           color="bg-indigo-500"
           loading={loading}
-          subtitle="Total sales from all channels"
+          subtitle="Sales driven by Meta ads & referrals"
         />
         <MetricCard
-          title="Store Orders"
-          value={shopifySummary?.totalOrders || 0}
+          title="Shopify Orders"
+          value={shopifySummary?.metaOrdersCount || 0}
           icon={ShoppingBag}
           color="bg-emerald-500"
           loading={loading}
-          subtitle="Total checkout transactions completed"
+          subtitle="Checkouts driven by Meta ads & referrals"
         />
         <MetricCard
-          title="Store Customers"
-          value={shopifySummary?.totalCustomers || 0}
+          title="Shopify Customers"
+          value={shopifySummary?.metaCustomersCount || 0}
           icon={Users}
           color="bg-blue-500"
           loading={loading}
-          subtitle="Unique purchasing buyers"
+          subtitle="Unique buyers from Meta ads & referrals"
         />
         <MetricCard
-          title="Average Order Value"
-          value={formatCurrency(aov, activeCurrency)}
+          title="Shopify AOV"
+          value={formatCurrency(metaAov, activeCurrency)}
           icon={Coins}
           color="bg-amber-500"
           loading={loading}
-          subtitle="Average spend per order (AOV)"
+          subtitle="Average spend per Meta-attributed order"
         />
         <MetricCard
-          title="Blended ROAS (MER)"
-          value={blendedROASDisplay}
+          title="Shopify ROAS"
+          value={attributedROASDisplay}
           icon={Percent}
           color="bg-violet-600"
           loading={loading}
-          subtitle="Total Store Sales / Meta Ad Spend"
+          subtitle="Shopify Meta Revenue / Meta Ad Spend"
         />
       </div>
     );

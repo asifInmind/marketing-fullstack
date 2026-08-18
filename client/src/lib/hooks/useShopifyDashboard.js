@@ -50,10 +50,35 @@ export function useShopifyDashboard(metaAds = [], dateRange = { preset: 'last_30
   const [wastedBudgetAlerts, setWastedBudgetAlerts] = useState([]);
   const [shopifySummary, setShopifySummary] = useState(DEFAULT_SHOPIFY_SUMMARY);
   const [totalStoreProducts, setTotalStoreProducts] = useState(0);
+  const [unmatchedAds, setUnmatchedAds] = useState([]);
   const [error, setError] = useState(null);
 
-  // Load credentials from localStorage on mount
+  // Load credentials from localStorage or URL OAuth callback on mount
   useEffect(() => {
+    // 1. Check for active OAuth redirection callback on load
+    if (typeof window !== 'undefined' && window.location.search) {
+      const params = new URLSearchParams(window.location.search);
+      const oauthShop = params.get('shop');
+      const oauthSuccess = params.get('oauth') === 'success';
+
+      if (oauthShop && oauthSuccess) {
+        console.log(`[Shopify OAuth Hook] Detected successful OAuth callback for shop: ${oauthShop}`);
+        
+        localStorage.setItem('shopifyStoreUrl', oauthShop);
+        localStorage.setItem('shopifyAccessToken', 'oauth');
+
+        setShopifyStoreUrl(oauthShop);
+        setShopifyToken('oauth');
+        setIsConnected(true);
+
+        // Clean up parameters from browser URL bar to keep it tidy
+        const newUrl = window.location.pathname + window.location.hash;
+        window.history.replaceState({}, document.title, newUrl);
+        return; // Skip loading from localStorage since we just set it
+      }
+    }
+
+    // 2. Fallback: Load credentials from localStorage
     let storedToken = localStorage.getItem('shopifyAccessToken') || localStorage.getItem('omsToken');
     let storedUrl = localStorage.getItem('shopifyStoreUrl');
     if (storedToken && storedUrl) {
@@ -96,6 +121,7 @@ export function useShopifyDashboard(metaAds = [], dateRange = { preset: 'last_30
       setWastedBudgetAlerts(json.wastedBudgetAlerts || EMPTY_ARRAY);
       setShopifySummary(json.shopifySummary || DEFAULT_SHOPIFY_SUMMARY);
       setTotalStoreProducts(json.totalProductsCount || 0);
+      setUnmatchedAds(json.unmatchedAds || EMPTY_ARRAY);
     } catch (err) {
       console.error("[Shopify Dashboard Hook Error]", err);
       setError(err.message || 'Failed to fetch calculations from backend');
@@ -135,6 +161,7 @@ export function useShopifyDashboard(metaAds = [], dateRange = { preset: 'last_30
     setProductPerformance([]);
     setWastedBudgetAlerts([]);
     setShopifySummary(DEFAULT_SHOPIFY_SUMMARY);
+    setUnmatchedAds([]);
     setIsConnected(false);
     setError(null);
   }, []);
@@ -164,6 +191,7 @@ export function useShopifyDashboard(metaAds = [], dateRange = { preset: 'last_30
     productPerformance,
     shopifySummary,
     totalStoreProducts: totalStoreProducts || productPerformance.length,
+    unmatchedAds,
     nextPageInfo: null,
     loadingMore: false,
     connectOauth,

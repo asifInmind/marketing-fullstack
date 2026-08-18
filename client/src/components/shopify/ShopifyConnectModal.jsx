@@ -9,6 +9,7 @@ export function ShopifyConnectModal({
   onConnectManual,
   loading
 }) {
+  const [activeTab, setActiveTab] = useState('oauth'); // 'oauth' or 'manual'
   const [shopUrl, setShopUrl] = useState('');
   const [apiToken, setApiToken] = useState('');
   const [validationError, setValidationError] = useState(null);
@@ -26,6 +27,14 @@ export function ShopifyConnectModal({
       setValidationError('Please enter your Shopify Store Domain.');
       return;
     }
+
+    if (activeTab === 'oauth') {
+      // Redirect browser to server OAuth route
+      const cleanShop = cleanUrl.toLowerCase().replace(/^https?:\/\//, '');
+      window.location.href = `/api/shopify/auth?shop=${encodeURIComponent(cleanShop)}`;
+      return;
+    }
+
     if (!cleanToken) {
       setValidationError('Please enter your Shopify Admin Access Token.');
       return;
@@ -58,6 +67,38 @@ export function ShopifyConnectModal({
           </button>
         </div>
 
+        {/* Tab Selection */}
+        <div className="flex border-b border-slate-100 dark:border-slate-800 px-6 bg-slate-50/50 dark:bg-slate-950/10">
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab('oauth');
+              setValidationError(null);
+            }}
+            className={`flex-1 py-3 text-sm font-semibold border-b-2 transition-all cursor-pointer ${
+              activeTab === 'oauth'
+                ? 'border-emerald-500 text-emerald-600 dark:text-emerald-400'
+                : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+            }`}
+          >
+            Automatic Link (OAuth)
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab('manual');
+              setValidationError(null);
+            }}
+            className={`flex-1 py-3 text-sm font-semibold border-b-2 transition-all cursor-pointer ${
+              activeTab === 'manual'
+                ? 'border-emerald-500 text-emerald-600 dark:text-emerald-400'
+                : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+            }`}
+          >
+            Manual Link (Token)
+          </button>
+        </div>
+
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
           {validationError && (
             <div className="p-3 bg-red-500/10 border border-red-200 dark:border-red-800/50 rounded-xl flex gap-2 text-xs text-red-600 dark:text-red-400">
@@ -68,7 +109,15 @@ export function ShopifyConnectModal({
 
           {/* Description */}
           <div className="p-4 bg-slate-50 dark:bg-slate-950 rounded-2xl border border-slate-100 dark:border-slate-900 text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-            Please enter your Shopify store domain and Admin API Access Token to synchronize your product inventory levels and sales revenue directly with your active Meta Ads campaigns.
+            {activeTab === 'oauth' ? (
+              <span>
+                Enter your Shopify domain (e.g. <strong>store-name.myshopify.com</strong>). Clicking authenticate will redirect you to Shopify to securely link your catalog and orders.
+              </span>
+            ) : (
+              <span>
+                Enter your store domain and custom Admin API Access Token to manually synchronize catalog pricing, stock levels, and order attribution parameters.
+              </span>
+            )}
           </div>
 
           {/* Store URL Input */}
@@ -86,20 +135,22 @@ export function ShopifyConnectModal({
             />
           </div>
 
-          {/* Token Input */}
-          <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
-              <Key className="w-3.5 h-3.5" /> Admin API Access Token
-            </label>
-            <input
-              type="password"
-              placeholder="e.g. shpat_xxxxxxxxxxxxxxxxxxxxxxxx"
-              value={apiToken}
-              onChange={(e) => setApiToken(e.target.value)}
-              className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 dark:focus:ring-emerald-500/50 transition-all text-sm"
-              required
-            />
-          </div>
+          {/* Token Input (Manual mode only) */}
+          {activeTab === 'manual' && (
+            <div className="space-y-1.5 animate-in fade-in slide-in-from-top-1 duration-200">
+              <label className="text-xs font-semibold text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
+                <Key className="w-3.5 h-3.5" /> Admin API Access Token
+              </label>
+              <input
+                type="password"
+                placeholder="e.g. shpat_xxxxxxxxxxxxxxxxxxxxxxxx"
+                value={apiToken}
+                onChange={(e) => setApiToken(e.target.value)}
+                className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 dark:focus:ring-emerald-500/50 transition-all text-sm"
+                required={activeTab === 'manual'}
+              />
+            </div>
+          )}
 
           {/* Submit Action */}
           <div className="pt-2">
@@ -113,6 +164,8 @@ export function ShopifyConnectModal({
                   <RefreshCw className="w-4 h-4 animate-spin" />
                   Connecting...
                 </>
+              ) : activeTab === 'oauth' ? (
+                'Authenticate & Link (OAuth)'
               ) : (
                 'Connect Shopify Store'
               )}

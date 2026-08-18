@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import crypto from 'crypto';
 import ShopifyProduct from '../models/ShopifyProduct.js';
 import ShopifyOrder from '../models/ShopifyOrder.js';
 import Merchant from '../models/Merchant.js';
@@ -579,7 +580,7 @@ router.get('/reset-db', async (req, res) => {
 // GET /api/shopify
 router.get('/', async (req, res) => {
   const type = req.query.type || 'products';
-  const shopify_token = req.query.shopify_token || req.query.oms_token;
+  let shopify_token = req.query.shopify_token || req.query.oms_token;
   const shopify_url = req.query.shopify_url;
   const limit = safeParseInt(req.query.limit, 25);
   const startDate = req.query.start_date;
@@ -587,23 +588,39 @@ router.get('/', async (req, res) => {
 
   console.log(`[Shopify API Route] Request: type=${type}, start_date=${startDate}, end_date=${endDate}`);
 
-  if (!shopify_token) {
-    return res.status(400).json({ error: 'Missing Shopify access token' });
-  }
   if (!shopify_url) {
     return res.status(400).json({ error: 'Missing Shopify store URL/domain' });
   }
 
   const shopDomain = sanitizeShopUrl(shopify_url);
 
+  // If token is missing or 'oauth' placeholder, look up from database Merchant record
+  if (!shopify_token || shopify_token === 'oauth') {
+    try {
+      const merchant = await Merchant.findOne({ storeUrl: shopDomain });
+      if (merchant && merchant.shopifyAccessToken) {
+        shopify_token = merchant.shopifyAccessToken;
+      }
+    } catch (err) {
+      console.warn("[Shopify API Route] Failed to look up OAuth token from DB:", err.message);
+    }
+  }
+
+  if (!shopify_token) {
+    return res.status(400).json({ error: 'Missing Shopify access token' });
+  }
+
   try {
+    const updateObj = {
+      storeUrl: shopDomain,
+      currency: req.query.currency || 'PKR'
+    };
+    if (req.query.shopify_token && req.query.shopify_token !== 'oauth') {
+      updateObj.shopifyAccessToken = req.query.shopify_token;
+    }
     await Merchant.findOneAndUpdate(
       { storeUrl: shopDomain },
-      {
-        storeUrl: shopDomain,
-        shopifyAccessToken: shopify_token,
-        currency: req.query.currency || 'PKR'
-      },
+      updateObj,
       { upsert: true, new: true }
     );
     console.log(`[Shopify API Route] Auto-linked Merchant record for ${shopDomain}`);
@@ -970,6 +987,10 @@ router.get('/', async (req, res) => {
       });
 
       const salesMap = {};
+      let totalMetaRevenue = 0;
+      let totalMetaOrdersCount = 0;
+      const totalMetaEmails = new Set();
+
       dbOrders.forEach(order => {
         const isCancelled = order.cancelledAt !== null;
         if (!isCancelled) {
@@ -1078,6 +1099,12 @@ router.get('/', async (req, res) => {
               }
             }
           });
+
+          if (isMetaAttributed) {
+            totalMetaRevenue += order.totalPrice || 0;
+            totalMetaOrdersCount++;
+            if (order.email) totalMetaEmails.add(order.email);
+          }
         }
       });
 
@@ -1219,29 +1246,9 @@ router.get('/', async (req, res) => {
       const totalCustomers = uniqueEmails.size;
       const currency = validOrders[0]?.currency || 'PKR';
 
-      // Meta-Attributed Shopify Orders that match the active, currently spending ads
-      const activeMetaOrderIds = new Set();
-      let activeMetaRevenue = 0;
-      let activeMetaOrdersCount = 0;
-      const activeMetaEmails = new Set();
-
-      Object.values(salesMap).forEach(sales => {
-        sales.matchedOrders.forEach(o => {
-          if (!activeMetaOrderIds.has(o.orderId)) {
-            activeMetaOrderIds.add(o.orderId);
-            const dbOrder = dbOrders.find(dbo => dbo.orderId === o.orderId);
-            if (dbOrder) {
-              activeMetaRevenue += dbOrder.totalPrice || 0;
-              activeMetaOrdersCount++;
-              if (dbOrder.email) activeMetaEmails.add(dbOrder.email);
-            }
-          }
-        });
-      });
-
-      const metaRevenue = activeMetaRevenue;
-      const metaOrdersCount = activeMetaOrdersCount;
-      const metaCustomersCount = activeMetaEmails.size;
+      const metaRevenue = totalMetaRevenue;
+      const metaOrdersCount = totalMetaOrdersCount;
+      const metaCustomersCount = totalMetaEmails.size;
 
       const shopifySummary = {
         totalRevenue,
@@ -1271,6 +1278,109 @@ router.get('/', async (req, res) => {
   } catch (error) {
     console.error("[Shopify API Route Error]", error);
     return res.status(500).json({ error: error.message || 'Failed to fetch from Shopify' });
+  }
+});
+
+// GET /api/shopify/auth
+router.get('/auth', async (req, res) => {
+  const shop = req.query.shop;
+  if (!shop) {
+    return res.status(400).send('Missing shop parameter');
+  }
+
+  const shopDomain = sanitizeShopUrl(shop);
+  const apiKey = process.env.SHOPIFY_API_KEY;
+  const redirectUri = process.env.SHOPIFY_REDIRECT_URI;
+  const scopes = 'read_products,read_orders,read_all_orders';
+  const state = crypto.randomBytes(16).toString('hex');
+
+  const redirectUrl = `https://${shopDomain}/admin/oauth/authorize?client_id=${apiKey}&scope=${scopes}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${state}`;
+  console.log(`[Shopify OAuth] Redirecting shop ${shopDomain} to Shopify authorization...`);
+  return res.redirect(redirectUrl);
+});
+
+// GET /api/shopify/auth/callback
+router.get('/auth/callback', async (req, res) => {
+  const { shop, code, state, hmac } = req.query;
+
+  if (!shop || !code || !state || !hmac) {
+    return res.status(400).send('Required OAuth parameters are missing');
+  }
+
+  const shopDomain = sanitizeShopUrl(shop);
+
+  // Verification 1: Stateless check of state format
+  if (state.length !== 32) {
+    return res.status(400).send('OAuth state verification failed');
+  }
+
+  // Verification 2: Verify HMAC Signature
+  const apiSecret = process.env.SHOPIFY_API_SECRET;
+  if (!apiSecret) {
+    console.error("[Shopify OAuth] Missing SHOPIFY_API_SECRET in env variables");
+    return res.status(500).send('Internal server configuration error');
+  }
+
+  // Format Shopify's lexicographically sorted validation query string manually
+  const keys = Object.keys(req.query).filter(k => k !== 'hmac').sort();
+  const message = keys.map(k => `${k}=${req.query[k]}`).join('&');
+  const generatedHmac = crypto
+    .createHmac('sha256', apiSecret)
+    .update(message)
+    .digest('hex');
+
+  if (generatedHmac !== hmac) {
+    console.warn(`[Shopify OAuth] HMAC validation failed for ${shopDomain}`);
+    return res.status(400).send('HMAC validation failed');
+  }
+
+  // Exchange auth code for token
+  const apiKey = process.env.SHOPIFY_API_KEY;
+  try {
+    const tokenUrl = `https://${shopDomain}/admin/oauth/access_token`;
+    const response = await fetch(tokenUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        client_id: apiKey,
+        client_secret: apiSecret,
+        code
+      })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Token exchange failed: ${errorText}`);
+    }
+
+    const tokenData = await response.json();
+    const accessToken = tokenData.access_token;
+
+    if (!accessToken) {
+      throw new Error('Access token not found in response');
+    }
+
+    // Save token to Merchant db model
+    await Merchant.findOneAndUpdate(
+      { storeUrl: shopDomain },
+      {
+        storeUrl: shopDomain,
+        shopifyAccessToken: accessToken,
+        currency: 'PKR'
+      },
+      { upsert: true, new: true }
+    );
+
+    console.log(`[Shopify OAuth] Authorized and saved access token for ${shopDomain}`);
+
+    // Redirect to frontend landing page with shop domain
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3001';
+    return res.redirect(`${frontendUrl}/?shop=${encodeURIComponent(shopDomain)}&oauth=success`);
+  } catch (err) {
+    console.error('[Shopify OAuth Callback Error]', err);
+    return res.status(500).send(`Authentication failed: ${err.message}`);
   }
 });
 

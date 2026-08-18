@@ -80,6 +80,7 @@ export function MetaDashboard({ accessToken, accountId }) {
     totalStoreProducts,
     nextPageInfo: shopifyNextPageInfo,
     loadingMore: shopifyLoadingMore,
+    unmatchedAds,
     connectOauth,
     connectManual,
     disconnect: disconnectShopify,
@@ -542,6 +543,7 @@ export function MetaDashboard({ accessToken, accountId }) {
                   loadingInsights={loadingInsights}
                   loadingCreatives={loadingCreatives}
                   currencyCode={currencyCode}
+                  unmatchedAds={unmatchedAds}
                 />
                 <MetaLoadMoreButton
                   hasMore={hasMore.ads}
