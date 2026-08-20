@@ -16,8 +16,31 @@ const app = express();
 const PORT = process.env.PORT || 5001;
 
 // Global Middlewares
+const allowedOrigins = [
+  process.env.FRONTEND_URL
+].filter(Boolean);
+
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:3001',
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like mobile apps, curl)
+    if (!origin) return callback(null, true);
+
+    // Allow configured production origin
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+
+    // Allow all local development origins on any port
+    const isLocalhost = origin.startsWith('http://localhost:') || origin === 'http://localhost' ||
+                        origin.startsWith('http://127.0.0.1:') || origin === 'http://127.0.0.1';
+    const isLocalNetwork = origin.startsWith('http://192.168.') || 
+                           origin.startsWith('http://172.') || 
+                           origin.startsWith('http://10.');
+
+    if (isLocalhost || isLocalNetwork) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true
 }));
 app.use(express.json());

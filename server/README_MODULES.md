@@ -25,7 +25,7 @@ server/
 The core runner that initializes the application:
 *   Loads environment variables (`.env`).
 *   Establishes the MongoDB connection via `config/db.js`.
-*   Configures global Express middlewares (CORS handling, URL encoding, JSON parser).
+*   Configures global Express middlewares, including a **port-independent and local-network-friendly CORS configuration** that dynamically allows requests from any port on `localhost` (`127.0.0.1`) and local networks (`192.168.*`, `172.*`, `10.*`).
 *   Mounts API endpoints under `/api/auth`, `/api/meta`, and `/api/shopify`.
 *   Starts the HTTP listener (defaulting to Port `5001`).
 
