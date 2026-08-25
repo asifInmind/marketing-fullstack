@@ -119,6 +119,5 @@ export const DATE_RANGE_OPTIONS = [
   { label: 'Last 7 Days', value: 'last_7d', preset: 'last_7d' },
   { label: 'Last 14 Days', value: 'last_14d', preset: 'last_14d' },
   { label: 'Last 30 Days', value: 'last_30d', preset: 'last_30d' },
-  { label: 'Last 90 Days', value: 'last_90d', preset: 'last_90d' },
   { label: 'Custom Range', value: 'custom', preset: null },
 ];

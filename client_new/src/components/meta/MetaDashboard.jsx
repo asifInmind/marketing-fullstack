@@ -5,15 +5,17 @@ import { useMetaDashboard } from "../../lib/hooks/useMetaDashboard";
 import { useShopifyDashboard } from "../../lib/hooks/useShopifyDashboard";
 import { MetaAdSetDetail } from "./MetaAdSetDetail";
 import { MetaMetricCards } from "./MetaMetricCards";
+import { AllChannelBreakdown } from "./AllChannelBreakdown";
 import { MetaDynamicTable } from "./MetaDynamicTable";
 import { MetaCampaignDetail } from "./MetaCampaignDetail";
+import { MetaCampaignAuditDrawer } from "./MetaCampaignAuditDrawer";
 import { MetaProductAuditDrawer } from "./MetaProductAuditDrawer";
 import { DATE_RANGE_OPTIONS } from "../../lib/utils/constants";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
 import CircularProgress from "@mui/material/CircularProgress";
-import { FormControl, MenuItem, Select, Typography, Paper, IconButton, Tooltip, DialogActions, TextField, DialogContent, DialogTitle, Dialog, Alert, AlertTitle } from "@mui/material";
+import { FormControl, MenuItem, Select, Typography, Paper, IconButton, Tooltip, DialogActions, TextField, DialogContent, DialogTitle, Dialog, Alert, AlertTitle, Card, Grid } from "@mui/material";
 import BarChartIcon from "@mui/icons-material/BarChart";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import ArrowDropDownIcon from "@mui/icons-material/ArrowDropDown";
@@ -261,6 +263,7 @@ export function MetaDashboard({ accessToken, accountId }) {
   const [shopifyAdFilter, setShopifyAdFilter] = useState('running');
   const [shopifyPerfSort, setShopifyPerfSort] = useState('best');
   const [selectedProductPerformance, setSelectedProductPerformance] = useState(null);
+  const [selectedAuditCampaign, setSelectedAuditCampaign] = useState(null);
   const [cardsViewMode, setCardsViewMode] = useState('comparison');
   const [customStartDate, setCustomStartDate] = useState('');
   const [customEndDate, setCustomEndDate] = useState('');
@@ -295,6 +298,89 @@ export function MetaDashboard({ accessToken, accountId }) {
     refresh: refreshShopify,
     unmatchedAds,
   } = useShopifyDashboard(ads, dateRange, loading || loadingInsights);
+
+  const dateParams = useMemo(() => {
+    if (!dateRange) return { start: null, end: null };
+    if (dateRange.preset === 'custom') {
+      return { start: dateRange.since, end: dateRange.until };
+    }
+    const end = new Date();
+    const start = new Date();
+    switch (dateRange.preset) {
+      case 'last_7d':
+        start.setDate(end.getDate() - 7);
+        break;
+      case 'last_14d':
+        start.setDate(end.getDate() - 14);
+        break;
+      case 'last_30d':
+        start.setDate(end.getDate() - 30);
+        break;
+      default:
+        start.setDate(end.getDate() - 30);
+    }
+    return {
+      start: start.toISOString().split('T')[0],
+      end: end.toISOString().split('T')[0]
+    };
+  }, [dateRange]);
+
+  const handleAuditClick = (rowOriginal, type) => {
+    if (type === "campaign") {
+      setSelectedAuditCampaign({ id: rowOriginal.id, name: rowOriginal.name });
+    } else {
+      setSelectedProductPerformance(rowOriginal);
+    }
+  };
+
+  // Override summaries to align 100% with the Shopify Catalog Performance Table totals
+  const compiledSummaries = useMemo(() => {
+    if (!isShopifyConnected || !productPerformance || productPerformance.length === 0) {
+      return { summary, shopifySummary };
+    }
+
+    const totalSpend = productPerformance.reduce((sum, p) => sum + (p.adSpend || 0), 0);
+    const totalClicks = productPerformance.reduce((sum, p) => sum + (p.adClicks || 0), 0);
+    const totalImpressions = productPerformance.reduce((sum, p) => sum + (p.adImpressions || 0), 0);
+    const totalConversions = productPerformance.reduce((sum, p) => sum + (p.attributedSales || 0), 0);
+    const totalRevenue = productPerformance.reduce((sum, p) => sum + (p.attributedRevenue || 0), 0);
+    const avgCTR = totalImpressions > 0 ? (totalClicks / totalImpressions) * 100 : 0;
+    const avgCPC = totalClicks > 0 ? totalSpend / totalClicks : 0;
+    const avgROAS = totalSpend > 0 ? totalRevenue / totalSpend : 0;
+
+    const metaRevenue = productPerformance.reduce((sum, p) => sum + (p.metaRevenue || 0), 0);
+    const metaOrdersCount = productPerformance.reduce((sum, p) => sum + (p.metaSalesQuantity || 0), 0);
+
+    // Extract unique emails from matched orders across all products
+    const uniqueEmails = new Set(productPerformance.flatMap(p => p.matchedOrders?.map(o => o.email) || []));
+    const metaCustomersCount = uniqueEmails.size;
+
+    const matchedSummary = {
+      totalSpend,
+      totalImpressions,
+      totalClicks,
+      totalConversions,
+      totalRevenue,
+      avgCTR,
+      avgCPC,
+      avgROAS,
+      averageROAS: avgROAS,
+      activeCampaigns: summary?.activeCampaigns || 0,
+      pausedCampaigns: summary?.pausedCampaigns || 0
+    };
+
+    const matchedShopifySummary = {
+      ...shopifySummary,
+      metaRevenue,
+      metaOrdersCount,
+      metaCustomersCount
+    };
+
+    return {
+      summary: matchedSummary,
+      shopifySummary: matchedShopifySummary
+    };
+  }, [isShopifyConnected, productPerformance, summary, shopifySummary]);
 
   // Get the selected campaign data
   const selectedCampaign = selectedCampaignId
@@ -362,11 +448,15 @@ export function MetaDashboard({ accessToken, accountId }) {
 
   const handleTabChange = (tab) => {
     setActiveTab(tab);
-    if (tab === "ads" && ads.length > 0) {
+  };
+
+  // Automatically load creatives when Ads tab is active and data is loaded
+  useEffect(() => {
+    if (activeTab === "ads" && ads && ads.length > 0 && !loading && !loadingCreatives) {
       const adIds = ads.map((ad) => ad.id);
       loadCreatives(adIds);
     }
-  };
+  }, [activeTab, ads, loading, loadingCreatives, loadCreatives]);
 
   const getActiveDateRangeLabel = () => {
     if (selectedDateRange === 'custom') {
@@ -740,7 +830,7 @@ export function MetaDashboard({ accessToken, accountId }) {
             {/* Summary Metrics */}
             <Box sx={{ display: 'flex', flexDirection: { xs: 'column', sm: 'row' }, sm: 'items-center', justifyContent: 'space-between', gap: 2, mb: 1.5 }}>
               <Typography variant="subtitle2" sx={{ fontWeight: 800, textTransform: 'uppercase', tracking: 'wider', color: 'text.secondary' }}>
-                Performance Overview (Active, Paused & Organic)
+                Performance Overview (Currently Active Campaigns, AdSets & Ads)
               </Typography>
               {isShopifyConnected && (
                 <FormControl
@@ -782,13 +872,23 @@ export function MetaDashboard({ accessToken, accountId }) {
             </Box>
 
             <MetaMetricCards
-              summary={summary}
+              summary={compiledSummaries.summary}
               loading={loading || loadingInsights}
               shopifyConnected={isShopifyConnected}
-              shopifySummary={shopifySummary}
+              shopifySummary={compiledSummaries.shopifySummary}
               viewMode={cardsViewMode}
               currencyCode={currencyCode}
             />
+
+            {isShopifyConnected && (
+              <AllChannelBreakdown
+                channelBreakdown={shopifySummary?.channelBreakdown}
+                totalRevenue={shopifySummary?.totalRevenue}
+                totalOrders={shopifySummary?.totalOrders}
+                currencyCode={currencyCode}
+                loading={loading || loadingInsights || shopifyLoading}
+              />
+            )}
 
             {/* Tabs & Dynamic Table */}
             <Box sx={{ display: "flex", gap: 1.5, flexWrap: "wrap", alignItems: "center" }}>
@@ -878,7 +978,7 @@ export function MetaDashboard({ accessToken, accountId }) {
                 shopifyLoading={shopifyLoading}
                 onCampaignClick={handleCampaignClick}
                 onAdSetClick={handleAdSetClick}
-                onAuditClick={setSelectedProductPerformance}
+                onAuditClick={handleAuditClick}
                 currencyCode={currencyCode}
                 unmatchedAds={unmatchedAds}
               />
@@ -890,6 +990,17 @@ export function MetaDashboard({ accessToken, accountId }) {
           open={!!selectedProductPerformance}
           onClose={() => setSelectedProductPerformance(null)}
           product={selectedProductPerformance}
+          currencyCode={currencyCode}
+          activeDateRangeLabel={getActiveDateRangeLabel()}
+        />
+
+        <MetaCampaignAuditDrawer
+          open={!!selectedAuditCampaign}
+          onClose={() => setSelectedAuditCampaign(null)}
+          campaignId={selectedAuditCampaign?.id}
+          campaignName={selectedAuditCampaign?.name}
+          startDate={dateParams.start}
+          endDate={dateParams.end}
           currencyCode={currencyCode}
           activeDateRangeLabel={getActiveDateRangeLabel()}
         />

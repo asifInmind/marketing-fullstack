@@ -25,6 +25,12 @@ const AdMetadataSchema = new mongoose.Schema({
   campaignObjective: {
     type: String
   },
+  campaignStartDate: {
+    type: String
+  },
+  campaignEndDate: {
+    type: String
+  },
   
   // Ad Set Details
   adSetId: {
@@ -40,6 +46,12 @@ const AdMetadataSchema = new mongoose.Schema({
   adSetTargeting: {
     type: String
   },
+  adSetStartDate: {
+    type: String
+  },
+  adSetEndDate: {
+    type: String
+  },
   
   // Ad Details
   adId: {
@@ -50,6 +62,9 @@ const AdMetadataSchema = new mongoose.Schema({
     type: String
   },
   adStatus: {
+    type: String
+  },
+  adCreatedTime: {
     type: String
   },
   

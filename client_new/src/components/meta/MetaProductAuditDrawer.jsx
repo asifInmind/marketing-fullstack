@@ -163,7 +163,7 @@ export function MetaProductAuditDrawer({
               color: product.metaAttributedROAS >= 2 ? '#10B981' : product.metaAttributedROAS >= 1 ? '#F59E0B' : '#EF4444'
             },
             {
-              title: 'Meta ROAS (UTM)',
+              title: 'Shopify ROAS (UTM)',
               value: product.adSpend > 0 ? `${utmRoas.toFixed(2)}x` : '—',
               subtitle: 'Facebook UTM / Spend',
               color: utmRoas >= 2 ? '#10B981' : utmRoas >= 1 ? '#F59E0B' : '#EF4444'
@@ -181,7 +181,7 @@ export function MetaProductAuditDrawer({
               color: 'text.primary'
             },
             {
-              title: 'Meta Sales (UTM)',
+              title: 'Shopify Sales (UTM)',
               value: formatCurrency(product.metaRevenue || 0),
               subtitle: `${product.metaSalesQuantity || 0} conversions`,
               color: 'text.primary'
@@ -468,6 +468,20 @@ export function MetaProductAuditDrawer({
                                     sx={{ fontSize: '0.6rem', height: '16px', fontWeight: 600, maxWidth: 120 }}
                                   />
                                 )}
+                                {order.utmTerm && (
+                                  <Chip
+                                    label={`adset: ${order.utmTerm}`}
+                                    size="small"
+                                    sx={{ fontSize: '0.6rem', height: '16px', fontWeight: 600, maxWidth: 120, bgcolor: '#EFF6FF', color: '#1E40AF' }}
+                                  />
+                                )}
+                                {order.utmContent && (
+                                  <Chip
+                                    label={`ad: ${order.utmContent}`}
+                                    size="small"
+                                    sx={{ fontSize: '0.6rem', height: '16px', fontWeight: 600, maxWidth: 120, bgcolor: '#ECFDF5', color: '#065F46' }}
+                                  />
+                                )}
                                 {order.clickId && (
                                   <Chip
                                     label="fbclid"
@@ -475,7 +489,7 @@ export function MetaProductAuditDrawer({
                                     sx={{ fontSize: '0.6rem', height: '16px', fontWeight: 600, bgcolor: '#F3E8FF', color: '#6B21A8' }}
                                   />
                                 )}
-                                {!order.utmSource && !order.utmCampaign && !order.clickId && (
+                                {!order.utmSource && !order.utmCampaign && !order.utmContent && !order.utmTerm && !order.clickId && (
                                   <Typography variant="caption" sx={{ fontSize: '0.65rem', color: 'text.secondary', fontStyle: 'italic' }}>
                                     organic facebook ref
                                   </Typography>

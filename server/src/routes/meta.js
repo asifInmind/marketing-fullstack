@@ -5,7 +5,7 @@ import {
   loadMoreCampaigns, 
   loadMoreAdSets, 
   loadMoreAds 
-} from '../lib/metaApi.js';
+} from '../lib/meta/index.js';
 import Merchant from '../models/Merchant.js';
 import AdMetadata from '../models/AdMetadata.js';
 import DailyAdInsight from '../models/DailyAdInsight.js';
@@ -31,9 +31,6 @@ function getMetaDateRange(preset, since, until) {
         break;
       case 'last_30d':
         start.setDate(end.getDate() - 30);
-        break;
-      case 'last_90d':
-        start.setDate(end.getDate() - 90);
         break;
       default:
         start.setDate(end.getDate() - 30);
@@ -97,9 +94,6 @@ function getMarkerRange(marker) {
       case 'last_30d':
         start.setDate(end.getDate() - 30);
         break;
-      case 'last_90d':
-        start.setDate(end.getDate() - 90);
-        break;
       default:
         return null;
     }
@@ -119,6 +113,196 @@ function getMarkerRange(marker) {
     return { start, end };
   }
   return null;
+}
+
+// Helper to compile and filter Meta Insights/Metadata to ACTIVE status only
+function compileMetaDashboardResponse(dbMeta, dbInsights) {
+  const campaignMap = {};
+  const adSetMap = {};
+  const adsList = [];
+  const creativesMap = {};
+
+  dbMeta.forEach(m => {
+    if (m.campaignId) {
+      const existing = campaignMap[m.campaignId];
+      campaignMap[m.campaignId] = {
+        id: m.campaignId,
+        name: m.campaignName || existing?.name || '',
+        status: m.campaignStatus || existing?.status || '',
+        objective: m.campaignObjective || existing?.objective || '',
+        start_time: m.campaignStartDate || existing?.start_time || '',
+        stop_time: m.campaignEndDate || existing?.stop_time || ''
+      };
+    }
+    if (m.adSetId) {
+      let parsedTargeting = null;
+      try {
+        if (m.adSetTargeting) {
+          parsedTargeting = JSON.parse(m.adSetTargeting);
+        }
+      } catch (e) {
+        parsedTargeting = m.adSetTargeting;
+      }
+
+      const existing = adSetMap[m.adSetId];
+      adSetMap[m.adSetId] = {
+        id: m.adSetId,
+        name: m.adSetName || existing?.name || '',
+        status: m.adSetStatus || existing?.status || '',
+        targeting: parsedTargeting || existing?.targeting || null,
+        campaignId: m.campaignId || existing?.campaignId || '',
+        campaignName: m.campaignName || existing?.campaignName || '',
+        start_time: m.adSetStartDate || existing?.start_time || '',
+        end_time: m.adSetEndDate || existing?.end_time || ''
+      };
+    }
+
+    const creative = m.creative ? {
+      id: m.creative.creativeId,
+      name: m.creative.creativeName,
+      thumbnailUrl: m.creative.thumbnailUrl,
+      body: m.creative.bodyText,
+      finalUrl: m.creative.destinationUrl,
+      callToAction: m.creative.callToAction,
+      format: m.creative.format,
+      headline: m.creative.headline,
+      description: m.creative.description
+    } : null;
+
+    adsList.push({
+      id: m.adId,
+      name: m.adName,
+      status: m.adStatus,
+      campaignId: m.campaignId,
+      adSetId: m.adSetId,
+      campaignName: m.campaignName,
+      adGroupName: m.adSetName,
+      creative: creative,
+      created_time: m.adCreatedTime || m.createdAt || m.lastUpdated
+    });
+
+    if (creative) {
+      creativesMap[creative.id] = creative;
+    }
+  });
+
+  // Back-fill campaign and adset names across objects to resolve dirty database caches
+  adsList.forEach(ad => {
+    if (!ad.campaignName && ad.campaignId && campaignMap[ad.campaignId]?.name) {
+      ad.campaignName = campaignMap[ad.campaignId].name;
+    }
+    if (!ad.adGroupName && ad.adSetId && adSetMap[ad.adSetId]?.name) {
+      ad.adGroupName = adSetMap[ad.adSetId].name;
+    }
+  });
+
+  Object.values(adSetMap).forEach(adSet => {
+    if (!adSet.campaignName && adSet.campaignId && campaignMap[adSet.campaignId]?.name) {
+      adSet.campaignName = campaignMap[adSet.campaignId].name;
+    }
+  });
+
+  // Aggregate daily insights by adId, campaignId, and adSetId
+  const adInsights = {};
+  const adSetInsights = {};
+  const campaignInsights = {};
+
+  let totalSpend = 0;
+  let totalImpressions = 0;
+  let totalClicks = 0;
+  let totalConversions = 0;
+  let totalRevenue = 0;
+
+  dbInsights.forEach(insight => {
+    const metaAd = dbMeta.find(m => m.adId === insight.adId);
+    if (!metaAd) return;
+
+    const campaignId = metaAd.campaignId;
+    const adSetId = metaAd.adSetId;
+
+    // Ad-level sum (always calculate for all ads so table rows display them)
+    if (!adInsights[insight.adId]) {
+      adInsights[insight.adId] = { spend: 0, impressions: 0, clicks: 0, conversions: 0, conversion_values: 0 };
+    }
+    adInsights[insight.adId].spend += insight.spend;
+    adInsights[insight.adId].impressions += insight.impressions;
+    adInsights[insight.adId].clicks += insight.clicks;
+    adInsights[insight.adId].conversions += insight.conversions;
+    adInsights[insight.adId].conversion_values += insight.conversionValue;
+
+    // AdSet-level sum (always calculate for all adsets)
+    if (adSetId) {
+      if (!adSetInsights[adSetId]) {
+        adSetInsights[adSetId] = { spend: 0, impressions: 0, clicks: 0, conversions: 0, conversion_values: 0 };
+      }
+      adSetInsights[adSetId].spend += insight.spend;
+      adSetInsights[adSetId].impressions += insight.impressions;
+      adSetInsights[adSetId].clicks += insight.clicks;
+      adSetInsights[adSetId].conversions += insight.conversions;
+      adSetInsights[adSetId].conversion_values += insight.conversionValue;
+    }
+
+    // Campaign-level sum (always calculate for all campaigns)
+    if (campaignId) {
+      if (!campaignInsights[campaignId]) {
+        campaignInsights[campaignId] = { spend: 0, impressions: 0, clicks: 0, conversions: 0, conversion_values: 0 };
+      }
+      campaignInsights[campaignId].spend += insight.spend;
+      campaignInsights[campaignId].impressions += insight.impressions;
+      campaignInsights[campaignId].clicks += insight.clicks;
+      campaignInsights[campaignId].conversions += insight.conversions;
+      campaignInsights[campaignId].conversion_values += insight.conversionValue;
+    }
+
+    // Grand Total Sum (ONLY sum currently active campaigns/adsets/ads for Metrics Cards!)
+    const isAdActive = metaAd.adStatus && metaAd.adStatus.toUpperCase() === 'ACTIVE';
+    const isAdSetActive = metaAd.adSetStatus && metaAd.adSetStatus.toUpperCase() === 'ACTIVE';
+    const isCampaignActive = metaAd.campaignStatus && metaAd.campaignStatus.toUpperCase() === 'ACTIVE';
+    
+    if (isAdActive && isAdSetActive && isCampaignActive) {
+      totalSpend += insight.spend;
+      totalImpressions += insight.impressions;
+      totalClicks += insight.clicks;
+      totalConversions += insight.conversions;
+      totalRevenue += insight.conversionValue;
+    }
+  });
+
+  const avgCTR = totalImpressions > 0 ? (totalClicks / totalImpressions) * 100 : 0;
+  const avgCPC = totalClicks > 0 ? totalSpend / totalClicks : 0;
+  const avgROAS = totalSpend > 0 ? totalRevenue / totalSpend : 0;
+
+  const activeCampCount = Object.values(campaignMap).filter(c => c.status === 'ACTIVE').length;
+  const pausedCampCount = Object.values(campaignMap).filter(c => c.status !== 'ACTIVE').length;
+
+  return {
+    campaigns: Object.values(campaignMap),
+    adSets: Object.values(adSetMap),
+    ads: adsList,
+    campaignInsights,
+    adSetInsights,
+    adInsights,
+    creatives: creativesMap,
+    summary: {
+      totalSpend,
+      totalImpressions,
+      totalClicks,
+      totalConversions,
+      totalRevenue,
+      avgCTR,
+      avgCPC,
+      avgROAS,
+      averageROAS: avgROAS,
+      activeCampaigns: activeCampCount,
+      pausedCampaigns: pausedCampCount
+    },
+    pagination: {
+      campaigns: { hasMore: false },
+      adSets: { hasMore: false },
+      ads: { hasMore: false }
+    },
+    loading: false
+  };
 }
 
 // GET /api/meta/debug-meta
@@ -151,7 +335,7 @@ router.get('/debug-meta', async (req, res) => {
       return res.status(400).json({ error: "Could not find Meta access token in DB or query" });
     }
     
-    const { fetchAllAds, fetchAllAdsInsights } = await import('../lib/metaApi.js');
+    const { fetchAllAds, fetchAllAdsInsights } = await import('../lib/meta/index.js');
     const config = { accessToken, accountId };
     const adsResult = await fetchAllAds(config, undefined, 150);
     const insightsResult = await fetchAllAdsInsights(config);
@@ -272,162 +456,8 @@ router.get('/', async (req, res) => {
           const hasAllStructures = uniqueAdIdsInInsights.every(adId => cachedAdIds.includes(adId));
 
           if (dbMeta && dbMeta.length > 0 && hasAllStructures && dbInsights.length > 0) {
-            console.log(`[Meta API Route] Cache HIT: Returning ${dbMeta.length} ads and ${dbInsights.length} daily insights from MongoDB`);
-            // Reconstruct campaigns, adsets, ads list
-            const campaignMap = {};
-            const adSetMap = {};
-            const adsList = [];
-            const creativesMap = {};
-            
-            dbMeta.forEach(m => {
-              if (m.campaignId) {
-                campaignMap[m.campaignId] = {
-                  id: m.campaignId,
-                  name: m.campaignName,
-                  status: m.campaignStatus,
-                  objective: m.campaignObjective
-                };
-              }
-              if (m.adSetId) {
-                let parsedTargeting = null;
-                try {
-                  if (m.adSetTargeting) {
-                    parsedTargeting = JSON.parse(m.adSetTargeting);
-                  }
-                } catch (e) {
-                  parsedTargeting = m.adSetTargeting;
-                }
-
-                adSetMap[m.adSetId] = {
-                  id: m.adSetId,
-                  name: m.adSetName,
-                  status: m.adSetStatus,
-                  targeting: parsedTargeting,
-                  campaign_id: m.campaignId,
-                  campaign_name: m.campaignName
-                };
-              }
-              adsList.push({
-                id: m.adId,
-                name: m.adName,
-                status: m.adStatus,
-                campaign_id: m.campaignId,
-                campaign_name: m.campaignName,
-                adset_id: m.adSetId,
-                adset_name: m.adSetName,
-                creative: m.creative?.creativeId ? { id: m.creative.creativeId } : undefined
-              });
-              if (m.creative && m.creative.creativeId) {
-                creativesMap[m.adId] = {
-                  id: m.creative.creativeId,
-                  name: m.creative.creativeName,
-                  thumbnail_url: m.creative.thumbnailUrl,
-                  body: m.creative.bodyText,
-                  destination_url: m.creative.destinationUrl,
-                  url_tags: m.creative.destinationUrl, // Frontend looks here for click links
-                  final_url: m.creative.destinationUrl, // Frontend fallback checks final_url
-                  call_to_action: m.creative.callToAction,
-                  format: m.creative.format,
-                  headline: m.creative.headline,
-                  description: m.creative.description
-                };
-              }
-            });
-
-            // Aggregate daily insights by adId, campaignId, and adSetId
-            const adInsights = {};
-            const adSetInsights = {};
-            const campaignInsights = {};
-
-            let totalSpend = 0;
-            let totalImpressions = 0;
-            let totalClicks = 0;
-            let totalConversions = 0;
-            let totalRevenue = 0;
-
-            dbInsights.forEach(insight => {
-              const metaAd = dbMeta.find(m => m.adId === insight.adId);
-              const campaignId = metaAd?.campaignId;
-              const adSetId = metaAd?.adSetId;
-
-              // Ad-level sum
-              if (!adInsights[insight.adId]) {
-                adInsights[insight.adId] = { spend: 0, impressions: 0, clicks: 0, conversions: 0, conversion_values: 0 };
-              }
-              adInsights[insight.adId].spend += insight.spend;
-              adInsights[insight.adId].impressions += insight.impressions;
-              adInsights[insight.adId].clicks += insight.clicks;
-              adInsights[insight.adId].conversions += insight.conversions;
-              adInsights[insight.adId].conversion_values += insight.conversionValue;
-
-              // AdSet-level sum
-              if (adSetId) {
-                if (!adSetInsights[adSetId]) {
-                  adSetInsights[adSetId] = { spend: 0, impressions: 0, clicks: 0, conversions: 0, conversion_values: 0 };
-                }
-                adSetInsights[adSetId].spend += insight.spend;
-                adSetInsights[adSetId].impressions += insight.impressions;
-                adSetInsights[adSetId].clicks += insight.clicks;
-                adSetInsights[adSetId].conversions += insight.conversions;
-                adSetInsights[adSetId].conversion_values += insight.conversionValue;
-              }
-
-              // Campaign-level sum
-              if (campaignId) {
-                if (!campaignInsights[campaignId]) {
-                  campaignInsights[campaignId] = { spend: 0, impressions: 0, clicks: 0, conversions: 0, conversion_values: 0 };
-                }
-                campaignInsights[campaignId].spend += insight.spend;
-                campaignInsights[campaignId].impressions += insight.impressions;
-                campaignInsights[campaignId].clicks += insight.clicks;
-                campaignInsights[campaignId].conversions += insight.conversions;
-                campaignInsights[campaignId].conversion_values += insight.conversionValue;
-              }
-
-              // Grand Total Sum
-              totalSpend += insight.spend;
-              totalImpressions += insight.impressions;
-              totalClicks += insight.clicks;
-              totalConversions += insight.conversions;
-              totalRevenue += insight.conversionValue;
-            });
-
-            const avgCTR = totalImpressions > 0 ? (totalClicks / totalImpressions) * 100 : 0;
-            const avgCPC = totalClicks > 0 ? totalSpend / totalClicks : 0;
-            const avgROAS = totalSpend > 0 ? totalRevenue / totalSpend : 0;
-
-            const activeCampCount = Object.values(campaignMap).filter(c => c.status === 'ACTIVE').length;
-            const pausedCampCount = Object.values(campaignMap).filter(c => c.status !== 'ACTIVE').length;
-
-            const payload = {
-              campaigns: Object.values(campaignMap),
-              adSets: Object.values(adSetMap),
-              ads: adsList,
-              campaignInsights,
-              adSetInsights,
-              adInsights,
-              creatives: creativesMap,
-              summary: {
-                totalSpend,
-                totalImpressions,
-                totalClicks,
-                totalConversions,
-                totalRevenue,
-                avgCTR,
-                avgCPC,
-                avgROAS,
-                averageROAS: avgROAS,
-                activeCampaigns: activeCampCount,
-                pausedCampaigns: pausedCampCount
-              },
-              pagination: {
-                campaigns: { hasMore: false },
-                adSets: { hasMore: false },
-                ads: { hasMore: false }
-              },
-              loading: false
-            };
-
+            console.log(`[Meta API Route] Cache HIT: Returning filtered active structures and insights from MongoDB`);
+            const payload = compileMetaDashboardResponse(dbMeta, dbInsights);
             return res.json({
               success: true,
               data: payload
@@ -468,12 +498,14 @@ router.get('/', async (req, res) => {
       // A. Cache AdMetadata
       if (data.ads) {
         data.ads.forEach(ad => {
-          const campaign = data.campaigns?.find(c => c.id === ad.campaign_id) || {};
-          const adSet = data.adSets?.find(s => s.id === ad.adset_id) || {};
+          const campaignId = ad.campaign_id || ad.campaign?.id;
+          const adSetId = ad.adset_id || ad.adset?.id;
+          const campaign = data.campaigns?.find(c => c.id === campaignId) || {};
+          const adSet = data.adSets?.find(s => s.id === adSetId) || {};
 
           // Enrich the live object so the response returned to the client contains these fields
-          ad.campaign_name = ad.campaign?.name || campaign.name || '';
-          ad.adset_name = ad.adset?.name || adSet.name || '';
+          ad.campaign_name = ad.campaign?.name || campaign.name || ad.campaign_name || '';
+          ad.adset_name = ad.adset?.name || adSet.name || ad.adset_name || '';
 
           const creativeId = ad.creative?.id;
           const creative = creativeId ? (data.creatives?.[creativeId] || {}) : {};
@@ -481,17 +513,22 @@ router.get('/', async (req, res) => {
           const updateObj = {
             storeUrl,
             channel: 'meta',
-            campaignId: ad.campaign_id,
+            campaignId: campaignId,
             campaignName: ad.campaign?.name || campaign.name || ad.campaign_name || '',
             campaignStatus: campaign.status || ad.campaign_status || '',
             campaignObjective: campaign.objective || '',
-            adSetId: ad.adset_id,
+            campaignStartDate: campaign.start_time || '',
+            campaignEndDate: campaign.stop_time || '',
+            adSetId: adSetId,
             adSetName: ad.adset?.name || adSet.name || ad.adset_name || '',
             adSetStatus: adSet.status || ad.adset_status || '',
             adSetTargeting: adSet.targeting ? JSON.stringify(adSet.targeting) : '',
+            adSetStartDate: adSet.start_time || '',
+            adSetEndDate: adSet.end_time || '',
             adId: ad.id,
             adName: ad.name,
             adStatus: ad.status || '',
+            adCreatedTime: ad.created_time || '',
             lastUpdated: new Date()
           };
 
@@ -561,21 +598,24 @@ router.get('/', async (req, res) => {
         );
       }
       
-      Promise.all(cachePromises)
-        .then(() => console.log(`[Meta API Route] Successfully cached ${cachePromises.length} Meta structures, insights, and marker in MongoDB`))
-        .catch(err => {
-          console.error("❌ [Meta API Route] Error caching Meta data in MongoDB:", err);
-          if (err.errors) {
-            Object.entries(err.errors).forEach(([field, error]) => {
-              console.error(`  Validation Error on field "${field}":`, error.message);
-            });
-          }
-        });
+      try {
+        await Promise.all(cachePromises);
+        console.log(`[Meta API Route] Successfully cached ${cachePromises.length} Meta structures, insights, and marker in MongoDB`);
+      } catch (err) {
+        console.error("❌ [Meta API Route] Error caching Meta data in MongoDB:", err);
+      }
     }
+
+    const dbInsights = await DailyAdInsight.find({
+      storeUrl,
+      date: { $gte: sinceDate, $lte: untilDate }
+    });
+    const dbMeta = await AdMetadata.find({ storeUrl });
+    const payload = compileMetaDashboardResponse(dbMeta, dbInsights);
 
     return res.json({
       success: true,
-      data: data,
+      data: payload,
     });
   } catch (error) {
     console.error('Meta API Route Error:', error);
@@ -679,7 +719,7 @@ router.post('/', async (req, res) => {
           }
 
           console.log(`[Meta API Route] Cache PARTIAL HIT: Fetching ${missingAdIds.length} missing creatives from Meta Graph API...`);
-          const { loadCreativesForAds } = await import('../lib/metaApi.js');
+          const { loadCreativesForAds } = await import('../lib/meta/index.js');
 
           const missingAdsFormat = dbAds
             .filter(m => missingAdIds.includes(m.adId))
@@ -720,7 +760,7 @@ router.post('/', async (req, res) => {
         }
 
         // 2. Fallback directly to Meta Graph API
-        const { loadCreativesForAds } = await import('../lib/metaApi.js');
+        const { loadCreativesForAds } = await import('../lib/meta/index.js');
         result = await loadCreativesForAds(ads, config);
         break;
       default:

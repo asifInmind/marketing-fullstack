@@ -32,6 +32,15 @@ const ShopifyOrderSchema = new mongoose.Schema({
     type: String,
     default: ''
   },
+  customerInfo: {
+    phone: { type: String, default: '' },
+    firstName: { type: String, default: '' },
+    lastName: { type: String, default: '' },
+    city: { type: String, default: '' },
+    province: { type: String, default: '' },
+    zip: { type: String, default: '' },
+    country: { type: String, default: '' }
+  },
   landingSite: {
     type: String,
     default: ''
@@ -52,6 +61,8 @@ const ShopifyOrderSchema = new mongoose.Schema({
     utmSource: String,
     utmMedium: String,
     utmCampaign: String,
+    utmContent: String,
+    utmTerm: String,
     clickId: String,            // Meta fbclid click token
     adId: String,               // Attributed Meta Ad ID
     adName: String,
@@ -62,6 +73,14 @@ const ShopifyOrderSchema = new mongoose.Schema({
       type: String,
       enum: ['fbclid_match', 'utm_match', 'ip_match', 'organic']
     }
+  },
+  sentToMeta: {
+    type: Boolean,
+    default: false
+  },
+  sentToMetaAt: {
+    type: Date,
+    default: null
   }
 }, {
   timestamps: { createdAt: 'systemCreatedAt', updatedAt: 'systemUpdatedAt' }

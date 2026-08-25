@@ -76,6 +76,10 @@ export function MetaMetricCards({
     ? shopifySummary.metaRevenue / shopifySummary.metaOrdersCount
     : 0;
 
+  const storeOverallAov = shopifySummary && shopifySummary.totalOrders > 0
+    ? shopifySummary.totalRevenue / shopifySummary.totalOrders
+    : 0;
+
   const getROASSubtitle = roas => {
     if (roas === 0) return 'No revenue yet'
     if (roas > 3) return '🚀 Excellent ROI'
@@ -166,11 +170,11 @@ export function MetaMetricCards({
       },
       {
         key: 'shopify_aov',
-        title: 'Shopify AOV',
+        title: 'Attributed AOV',
         value: formatCurrency(metaAov),
         icon: Coins,
         color: 'secondary',
-        subtitle: 'Average order value'
+        subtitle: 'Ad-driven average order value'
       },
       {
         key: 'shopify_roas',
@@ -186,7 +190,7 @@ export function MetaMetricCards({
     statsData = [
       {
         key: 'spend_orders',
-        title: 'Spend & Orders',
+        title: 'Meta Spend vs Shopify Orders',
         value: formatCurrency(summary?.totalSpend || 0),
         secondaryValue: shopifySummary?.metaOrdersCount ? shopifySummary.metaOrdersCount.toLocaleString() : '0',
         icon: DollarSign,
@@ -194,17 +198,18 @@ export function MetaMetricCards({
         subtitle: 'Spend vs Shopify Orders'
       },
       {
-        key: 'traffic_buyers',
-        title: 'Traffic & Buyers',
-        value: summary?.totalClicks ? summary.totalClicks.toLocaleString() : '0',
-        secondaryValue: shopifySummary?.metaCustomersCount ? shopifySummary.metaCustomersCount.toLocaleString() : '0',
-        icon: MousePointerClick,
+        key: 'aov',
+        title: 'Average Revenue per order',
+        value: summary?.totalConversions > 0 ? formatCurrency(summary.totalRevenue / summary.totalConversions) : formatCurrency(0),
+        secondaryValue: formatCurrency(metaAov),
+        thirdValue: formatCurrency(storeOverallAov),
+        icon: Coins,
         color: 'secondary',
-        subtitle: 'Clicks vs Shopify Buyers'
+        subtitle: 'Pixel vs Matched vs Store AOV'
       },
       {
         key: 'impressions',
-        title: 'Ad Impressions',
+        title: 'Meta Ad Impressions',
         value: summary?.totalImpressions ? summary.totalImpressions.toLocaleString() : '0',
         icon: Eye,
         color: 'secondary',
@@ -215,27 +220,30 @@ export function MetaMetricCards({
         title: 'Conversions Audit',
         value: summary?.totalConversions ? summary.totalConversions.toLocaleString() : '0',
         secondaryValue: shopifySummary?.metaOrdersCount ? shopifySummary.metaOrdersCount.toLocaleString() : '0',
+        thirdValue: shopifySummary?.totalOrders ? shopifySummary.totalOrders.toLocaleString() : '0',
         icon: Target,
         color: 'secondary',
-        subtitle: 'Pixel Purchases vs Shopify Orders'
+        subtitle: 'Pixel vs Matched vs Store Total'
       },
       {
         key: 'revenue',
-        title: 'Revenue Audit',
+        title: 'generated Revenue Audit',
         value: formatCurrency(summary?.totalRevenue || 0),
         secondaryValue: formatCurrency(shopifySummary?.metaRevenue || 0),
+        thirdValue: formatCurrency(shopifySummary?.totalRevenue || 0),
         icon: Wallet,
         color: 'secondary',
-        subtitle: 'Pixel Revenue vs Shopify Revenue'
+        subtitle: 'Pixel vs Matched vs Store Total'
       },
       {
         key: 'roas',
         title: 'ROAS Comparison',
         value: roasDisplay,
         secondaryValue: attributedROASDisplay,
+        thirdValue: blendedROASDisplay,
         icon: Percent,
         color: 'secondary',
-        subtitle: 'Pixel ROAS vs Shopify ROAS'
+        subtitle: 'Pixel vs Matched vs Blended ROAS'
       }
     ];
   }
@@ -247,7 +255,8 @@ export function MetaMetricCards({
     <Grid container spacing={3}>
       {statsData.map((item, index) => {
         const IconComponent = item.icon
-        const isDouble = item.secondaryValue !== undefined;
+        const isTriple = item.thirdValue !== undefined;
+        const isDouble = !isTriple && item.secondaryValue !== undefined;
 
         return (
           <Grid item xs={12} sm={6} md={colSize} key={item.key}>
@@ -278,7 +287,36 @@ export function MetaMetricCards({
                     </Box>
 
                     <Box sx={{ flex: 1, display: 'flex', alignItems: 'center', mt: 0.5 }}>
-                      {isDouble ? (
+                      {isTriple ? (
+                        <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', width: '100%' }}>
+                          <Box sx={{ minWidth: 0, flex: 1 }}>
+                            <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', fontSize: '0.6rem', fontWeight: 700, textTransform: 'uppercase' }}>
+                              Meta Pixel
+                            </Typography>
+                            <Typography variant="body2" sx={{ fontWeight: 800, color: '#22303E', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+                              {item.value}
+                            </Typography>
+                          </Box>
+                          <Divider orientation="vertical" flexItem sx={{ borderRightWidth: 1.5, my: 0.5 }} />
+                          <Box sx={{ minWidth: 0, flex: 1 }}>
+                            <Typography variant="caption" sx={{ color: 'primary.main', display: 'block', fontSize: '0.6rem', fontWeight: 700, textTransform: 'uppercase' }}>
+                              Shopify Matched
+                            </Typography>
+                            <Typography variant="body2" sx={{ fontWeight: 800, color: 'primary.main', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+                              {item.secondaryValue}
+                            </Typography>
+                          </Box>
+                          <Divider orientation="vertical" flexItem sx={{ borderRightWidth: 1.5, my: 0.5 }} />
+                          <Box sx={{ minWidth: 0, flex: 1 }}>
+                            <Typography variant="caption" sx={{ color: 'success.main', display: 'block', fontSize: '0.6rem', fontWeight: 700, textTransform: 'uppercase' }}>
+                              {item.key === 'roas' ? 'Blended' : 'Shopify Store Total'}
+                            </Typography>
+                            <Typography variant="body2" sx={{ fontWeight: 800, color: 'success.main', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+                              {item.thirdValue}
+                            </Typography>
+                          </Box>
+                        </Box>
+                      ) : isDouble ? (
                         <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', width: '100%' }}>
                           <Box sx={{ minWidth: 0, flex: 1 }}>
                             <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', fontSize: '0.65rem', fontWeight: 700, textTransform: 'uppercase' }}>

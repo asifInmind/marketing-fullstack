@@ -30,9 +30,6 @@ const getDateRangeParams = (range) => {
     case 'last_30d':
       start.setDate(end.getDate() - 30);
       break;
-    case 'last_90d':
-      start.setDate(end.getDate() - 90);
-      break;
     default:
       start.setDate(end.getDate() - 30);
   }

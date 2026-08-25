@@ -125,14 +125,15 @@ export function MetaDynamicTable({
     shopifySalesQuantity: "Shopify Sales",
     shopifyRevenue: "Shopify Revenue",
     metaSalesQuantity: "Meta Sales",
-    metaRevenue: "Meta Sales (UTM)",
+    metaRevenue: "Shopify Sales (UTM)",
+    gap: "Sales Gap",
     adSpend: "Ad Spend (Meta)",
     adClicks: "Ad Clicks",
     attributedSales: "Attributed Sales",
     attributedRevenue: "Meta Sales (Pixel)",
     trueROAS: "True ROAS",
     metaAttributedROAS: "Meta ROAS (Pixel)",
-    utmRoas: "Meta ROAS (UTM)",
+    utmRoas: "Shopify ROAS (UTM)",
     audit: "Ads Performance",
   };
 
@@ -142,6 +143,8 @@ export function MetaDynamicTable({
         return [
           "name",
           "status",
+          "startDate",
+          "endDate",
           "type",
           "impressions",
           "clicks",
@@ -150,6 +153,7 @@ export function MetaDynamicTable({
           "conversions",
           "conversionValue",
           "roas",
+          "audit",
         ];
 
       case "adSets":
@@ -157,6 +161,8 @@ export function MetaDynamicTable({
           "name",
           "campaignName",
           "status",
+          "startDate",
+          "endDate",
           "targeting",
           "impressions",
           "clicks",
@@ -170,6 +176,8 @@ export function MetaDynamicTable({
         return [
           "name",
           "status",
+          "startDate",
+          "endDate",
           "creative",
           "campaignName",
           "adGroupName",
@@ -188,6 +196,7 @@ export function MetaDynamicTable({
           "adSpend",
           "attributedRevenue",
           "metaRevenue",
+          "gap",
           "metaAttributedROAS",
           "utmRoas",
           "audit",
@@ -203,9 +212,36 @@ export function MetaDynamicTable({
       .filter((key) => key !== "_id")
       .map((key) => ({
         accessorKey: key,
-        header: columnNameMap[key] || key,
+        header: key === "audit" && activeTab === "campaigns" ? "Campaign Audit" : (columnNameMap[key] || key),
         cell: ({ row, getValue }) => {
           const value = getValue();
+
+          if (key === "gap" && activeTab === "shopify") {
+            const pixelSales = Number(row.original.attributedSales || 0);
+            const utmSales = Number(row.original.metaSalesQuantity || 0);
+            const gapQty = pixelSales - utmSales;
+
+            const pixelRev = Number(row.original.attributedRevenue || 0);
+            const utmRev = Number(row.original.metaRevenue || 0);
+            const gapRev = pixelRev - utmRev;
+
+            const textColor = '#22303E';
+
+            const maxSales = Math.max(pixelSales, utmSales);
+            const pct = maxSales > 0 ? (gapQty / maxSales) * 100 : 0;
+            return (
+              <Box sx={{ textAlign: 'right' }}>
+                <Typography component="span" sx={{ fontWeight: 600, display: 'block' }}>
+                  {Math.abs(gapQty)} sold
+                </Typography>
+                {/* {pixelSales > 0 && (
+                  <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', mt: 0.5 }}>
+                    {Math.abs(pct).toFixed(1)}%
+                  </Typography>
+                )} */}
+              </Box>
+            );
+          }
 
           if (key === "utmRoas" && activeTab === "shopify") {
             const spend = row.original.adSpend || 0;
@@ -251,8 +287,51 @@ export function MetaDynamicTable({
             return <Box sx={{ display: 'flex', justifyContent: 'center', color: '#94A3B8', fontWeight: 600 }}>—</Box>;
           }
 
+          if (key === "audit" && activeTab === "campaigns") {
+            const spend = row.original.cost || 0;
+            const statusUpper = row.original.status?.toUpperCase();
+            const isActive = statusUpper === "ACTIVE" || statusUpper === "ENABLED";
+            if (isActive && spend > 0 && onAuditClick) {
+              return (
+                <Box sx={{ display: 'flex', justifyContent: 'center' }}>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    onClick={() => onAuditClick(row.original, "campaign")}
+                    className="bg-white text-primary dark:bg-secondary dark:text-white"
+                    sx={{
+                      height: '34px',
+                      textTransform: 'none',
+                      fontSize: '0.85rem',
+                      whiteSpace: 'nowrap',
+                      fontWeight: 600,
+                    }}
+                  >
+                    Audit Campaign
+                  </Button>
+                </Box>
+              );
+            }
+            return <Box sx={{ display: 'flex', justifyContent: 'center', color: '#94A3B8', fontWeight: 600 }}>—</Box>;
+          }
+
           if (value === null || value === undefined) {
             return "—";
+          }
+
+          if (key === "startDate" || key === "endDate") {
+            if (!value || value === "—") return "—";
+            try {
+              const date = new Date(value);
+              if (isNaN(date.getTime())) return "—";
+              return date.toLocaleDateString("en-US", {
+                month: "short",
+                day: "numeric",
+                year: "numeric"
+              });
+            } catch {
+              return String(value);
+            }
           }
 
           if (key === "status") {
@@ -662,27 +741,33 @@ export function MetaDynamicTable({
     pageSize: 20,
   });
 
+  // Reset filter when changing activeTab to avoid showing empty screens
+  useEffect(() => {
+    setAdFilter('all');
+  }, [activeTab]);
+
   useEffect(() => {
     setPagination((prev) => ({ ...prev, pageIndex: 0 }));
   }, [activeTab, adFilter]);
 
   const filteredData = useMemo(() => {
-    if (activeTab !== 'ads') return data;
+    if (!data) return [];
 
     switch (adFilter) {
       case 'active':
-        return data.filter(a => a.status === 'ENABLED' || a.status === 'ACTIVE');
+        return data.filter(item => item.status === 'ENABLED' || item.status === 'ACTIVE');
       case 'spending':
-        return data.filter(a => (a.cost || a.spend || 0) > 0);
+        return data.filter(item => (item.cost || item.spend || 0) > 0);
       case 'active_spending':
-        return data.filter(a => {
-          const isActive = a.status === 'ENABLED' || a.status === 'ACTIVE';
-          const hasSpend = (a.cost || a.spend || 0) > 0;
+        return data.filter(item => {
+          const isActive = item.status === 'ENABLED' || item.status === 'ACTIVE';
+          const hasSpend = (item.cost || item.spend || 0) > 0;
           return isActive && hasSpend;
         });
       case 'unmatched':
+        if (activeTab !== 'ads') return data;
         const unmatchedIds = new Set((unmatchedAds || []).map(ua => ua?.id || ua));
-        return data.filter(a => unmatchedIds.has(a.id));
+        return data.filter(item => unmatchedIds.has(item.id));
       default:
         return data;
     }
@@ -722,14 +807,14 @@ export function MetaDynamicTable({
 
   return (
     <Card sx={{ bgcolor: 'white' }}>
-      {activeTab === "ads" && !loading && data && data.length > 0 && (
+      {!loading && data && data.length > 0 && (activeTab === "campaigns" || activeTab === "adSets" || activeTab === "ads") && (
         <Box sx={{ p: 2, display: "flex", flexWrap: "wrap", gap: 1, borderBottom: "1px solid rgba(224, 224, 224, 1)" }}>
           {[
             { key: 'all', label: 'All', count: data.length, color: 'default' },
             { key: 'active', label: 'Active', count: data.filter(a => a.status === 'ENABLED' || a.status === 'ACTIVE').length, color: 'success' },
             { key: 'spending', label: 'Spending', count: data.filter(a => (a.cost || a.spend || 0) > 0).length, color: 'primary' },
             { key: 'active_spending', label: 'Active & Spending', count: data.filter(a => (a.status === 'ENABLED' || a.status === 'ACTIVE') && (a.cost || a.spend || 0) > 0).length, color: 'secondary' },
-            ...((unmatchedAds && unmatchedAds.length > 0)
+            ...((activeTab === "ads" && unmatchedAds && unmatchedAds.length > 0)
               ? [{ key: 'unmatched', label: 'Unmatched', count: data.filter(a => new Set((unmatchedAds || []).map(ua => ua?.id || ua)).has(a.id)).length, color: 'error' }]
               : [])
           ].map((btn) => {
@@ -921,6 +1006,33 @@ export function MetaDynamicTable({
                         return `${num.toFixed(2)}x`;
                       }
 
+                      if (colKey === "gap") {
+                        const totalPixelSales = data.reduce((sum, r) => sum + Number(r.attributedSales || 0), 0);
+                        const totalShopifySales = data.reduce((sum, r) => sum + Number(r.metaSalesQuantity || 0), 0);
+                        const gapQty = totalPixelSales - totalShopifySales;
+
+                        const totalPixelRev = data.reduce((sum, r) => sum + Number(r.attributedRevenue || 0), 0);
+                        const totalShopifyRev = data.reduce((sum, r) => sum + Number(r.metaRevenue || 0), 0);
+                        const gapRev = totalPixelRev - totalShopifyRev;
+
+                        const textColor = '#22303E';
+
+                        const maxTotalSales = Math.max(totalPixelSales, totalShopifySales);
+                        const pct = maxTotalSales > 0 ? (gapQty / maxTotalSales) * 100 : 0;
+                        return (
+                          <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+                            <Typography component="span" sx={{ fontWeight: 600, display: 'block', fontSize: '0.8rem' }}>
+                              {Math.abs(gapQty)} sold
+                            </Typography>
+                            {totalPixelSales > 0 && (
+                              <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', mt: 0.5 }}>
+                                {Math.abs(pct).toFixed(1)}%
+                              </Typography>
+                            )}
+                          </Box>
+                        );
+                      }
+
                       // 4. Standard Counts (Impressions, Clicks, Conversions)
                       if (["impressions", "clicks", "conversions"].includes(colKey)) {
                         return Math.round(num).toLocaleString();
@@ -942,7 +1054,7 @@ export function MetaDynamicTable({
                         );
                       }
 
-                      const isNumeric = sums[key] !== undefined;
+                      const isNumeric = sums[key] !== undefined || key === "gap";
 
                       if (!isNumeric) {
                         return <td key={key} className="px-4 py-2.5" />;

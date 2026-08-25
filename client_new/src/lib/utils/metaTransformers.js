@@ -214,15 +214,15 @@ export function transformAdSet(adSet, insights) {
   console.log('🔄 Transforming ad set:', {
     id: adSet.id,
     name: adSet.name,
-    campaign_id: adSet.campaign_id,
-    campaign_name: adSet.campaign_name,
+    campaign_id: adSet.campaignId || adSet.campaign_id,
+    campaign_name: adSet.campaignName || adSet.campaign_name,
   });
   
   return {
     id: adSet.id,
     name: safeString(adSet.name),
-    campaignName: safeString(adSet.campaign_name || 'N/A'),
-    campaignId: adSet.campaign_id,
+    campaignName: safeString(adSet.campaignName || adSet.campaign_name || 'N/A'),
+    campaignId: adSet.campaignId || adSet.campaign_id,
     status: transformStatus(adSet.status),
     clicks: transformedInsights.clicks,
     impressions: transformedInsights.impressions,
@@ -233,6 +233,8 @@ export function transformAdSet(adSet, insights) {
     budget: adSet.daily_budget ? adSet.daily_budget / 100 : 0,
     targeting: targetingSummary,
     optimizationGoal: safeString(adSet.optimization_goal, 'N/A'),
+    startDate: adSet.start_time || adSet.startDate,
+    endDate: adSet.end_time || adSet.endDate,
     roas: roas,
     raw: adSet,
     insights: transformedInsights,
@@ -250,21 +252,22 @@ export function transformAd(ad, insights, creative) {
   const revenue = transformedInsights.conversion_values;
   const roas = calculateROAS(revenue, cost);
   
+  const callToActionStr = creative?.callToAction || creative?.call_to_action || '';
   let adType = 'DISPLAY';
-  if (creative?.call_to_action) {
-    if (creative.call_to_action.includes('LEARN')) adType = 'VIDEO';
-    else if (creative.call_to_action.includes('SHOP')) adType = 'SHOPPING';
-    else if (creative.call_to_action.includes('SIGN')) adType = 'LEAD_GEN';
+  if (callToActionStr) {
+    if (callToActionStr.includes('LEARN')) adType = 'VIDEO';
+    else if (callToActionStr.includes('SHOP')) adType = 'SHOPPING';
+    else if (callToActionStr.includes('SIGN')) adType = 'LEAD_GEN';
   }
   
   return {
     id: ad.id,
     name: safeString(ad.name),
     type: adType,
-    adGroupName: safeString(ad.adset_name || 'N/A'),
-    campaignName: safeString(ad.campaign_name || 'N/A'),
-    adSetId: ad.adset_id,
-    campaignId: ad.campaign_id,
+    adGroupName: safeString(ad.adGroupName || ad.adset_name || 'N/A'),
+    campaignName: safeString(ad.campaignName || ad.campaign_name || 'N/A'),
+    adSetId: ad.adSetId || ad.adset_id,
+    campaignId: ad.campaignId || ad.campaign_id,
     clicks: transformedInsights.clicks,
     impressions: transformedInsights.impressions,
     cost: cost,
@@ -273,8 +276,10 @@ export function transformAd(ad, insights, creative) {
     conversionValue: revenue,
     headline: creative?.headline || DEFAULT_VALUES.TEXT,
     description: creative?.description || DEFAULT_VALUES.TEXT,
-    finalUrl: creative?.final_url || DEFAULT_VALUES.URL,
+    finalUrl: creative?.finalUrl || creative?.final_url || DEFAULT_VALUES.URL,
     status: transformStatus(ad.status),
+    startDate: ad.created_time || ad.createdAt,
+    endDate: null,
     roas: roas,
     raw: ad,
     insights: transformedInsights,

@@ -374,8 +374,10 @@ export function useMetaDashboard(accessToken, accountId) {
   const loadCreatives = useCallback(async (adIds) => {
     if (!data || adIds.length === 0) return;
     
-    const adsWithoutCreatives = data.ads.filter(
-      ad => adIds.includes(ad.id) && !data.creatives[ad.id]
+    const adsList = data.ads || [];
+    const creatives = data.creatives || {};
+    const adsWithoutCreatives = adsList.filter(
+      ad => adIds.includes(ad.id) && !creatives[ad.id]
     );
     
     if (adsWithoutCreatives.length === 0) return;
@@ -401,15 +403,18 @@ export function useMetaDashboard(accessToken, accountId) {
         throw new Error(result.error || 'Failed to load creatives');
       }
       
-      setData(prev => ({
-        ...prev,
-        creatives: {
-          ...prev.creatives,
-          ...result.data,
-        },
-      }));
+      setData(prev => {
+        if (!prev) return null;
+        return {
+          ...prev,
+          creatives: {
+            ...(prev.creatives || {}),
+            ...result.data,
+          },
+        };
+      });
     } catch (err) {
-      setError(err.message || 'Failed to load creatives');
+      console.warn('⚠️ Failed to load creatives:', err.message);
     } finally {
       setLoadingCreatives(false);
     }
