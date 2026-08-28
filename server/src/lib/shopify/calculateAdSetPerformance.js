@@ -2,8 +2,10 @@ import ShopifyOrder from '../../models/ShopifyOrder.js';
 import AdMetadata from '../../models/AdMetadata.js';
 import DailyAdInsight from '../../models/DailyAdInsight.js';
 
-// Aggregates and calculates campaign-level ROAS, matched Shopify sales, daily breakdown, and health alerts.
-export async function calculateCampaignPerformance({ shopDomain, campaignId, startDate, endDate, currencyCode = 'PKR' }) {
+/**
+ * Aggregates and calculates adset-level ROAS, matched Shopify sales, daily breakdown, and health alerts.
+ */
+export async function calculateAdSetPerformance({ shopDomain, adSetId, startDate, endDate, currencyCode = 'PKR' }) {
   // 1. Resolve dates
   let sinceDate = new Date();
   sinceDate.setDate(sinceDate.getDate() - 30);
@@ -16,13 +18,12 @@ export async function calculateCampaignPerformance({ shopDomain, campaignId, sta
   untilDate.setUTCHours(23, 59, 59, 999);
 
   // 2. Load Meta structures, insights, and Shopify orders
-  const dbMeta = await AdMetadata.find({ storeUrl: shopDomain, campaignId });
-
+  const dbMeta = await AdMetadata.find({ storeUrl: shopDomain, adSetId });
 
   const adIds = dbMeta.map(m => m.adId).filter(Boolean);
-  const adSetIds = Array.from(new Set(dbMeta.map(m => m.adSetId).filter(Boolean)));
   const adNames = dbMeta.map(m => m.adName || '').filter(Boolean);
-  const adSetNames = Array.from(new Set(dbMeta.map(m => m.adSetName || '').filter(Boolean)));
+  const adSetName = dbMeta[0]?.adSetName || 'N/A';
+  const adSetStatus = dbMeta[0]?.adSetStatus || 'UNKNOWN';
 
   const dbInsights = await DailyAdInsight.find({
     storeUrl: shopDomain,
@@ -35,7 +36,7 @@ export async function calculateCampaignPerformance({ shopDomain, campaignId, sta
     createdAt: { $gte: sinceDate, $lte: untilDate }
   });
 
-  // 3. Aggregate campaign-level Meta metrics
+  // 3. Aggregate adset-level Meta metrics
   let totalSpend = 0;
   let totalClicks = 0;
   let totalImpressions = 0;
@@ -50,10 +51,7 @@ export async function calculateCampaignPerformance({ shopDomain, campaignId, sta
     totalRevenue += ins.conversionValue || 0;
   });
 
-  const campaignName = dbMeta[0]?.campaignName || 'N/A';
-  const campaignStatus = dbMeta[0]?.campaignStatus || 'UNKNOWN';
-
-  // 4. Find matched Shopify orders for this campaign
+  // 4. Find matched Shopify orders for this ad set
   const normalizeStr = (str) => {
     try {
       return decodeURIComponent(str || '').toLowerCase().replace(/[\s\-_]/g, '');
@@ -61,17 +59,15 @@ export async function calculateCampaignPerformance({ shopDomain, campaignId, sta
       return (str || '').toLowerCase().replace(/[\s\-_]/g, '');
     }
   };
-  const targetCampaignNorm = normalizeStr(campaignName);
+
+  const targetAdSetNameNorm = normalizeStr(adSetName);
   const normalizedAdNames = adNames.map(name => normalizeStr(name)).filter(Boolean);
-  const normalizedAdSetNames = adSetNames.map(name => normalizeStr(name)).filter(Boolean);
-
-
 
   const matchedOrders = [];
   let shopifyRevenue = 0;
 
   dbOrders.forEach(o => {
-    if (o.cancelledAt !== null) return;
+    if (o.cancelledAt !== null && o.cancelledAt !== undefined) return;
 
     let isMatched = false;
     let orderSource = (o.attribution?.utmSource || '').trim();
@@ -98,54 +94,42 @@ export async function calculateCampaignPerformance({ shopDomain, campaignId, sta
       } catch { }
     }
 
-    const orderCampaignNorm = normalizeStr(orderCampaignName);
     const orderContentNorm = normalizeStr(orderContent);
     const orderTermNorm = normalizeStr(orderTerm);
 
-    // Guard clause: If the order explicitly specifies a different campaign ID, do not match it to this campaign
+    // Guard clause: If the order explicitly specifies a different ad set ID or campaign ID, skip matching it
+    const orderAsId = orderAdSetId || (orderTerm && /^\d+$/.test(orderTerm) ? orderTerm : null);
+    if (orderAsId && orderAsId !== adSetId) {
+      return;
+    }
+    const campaignId = dbMeta[0]?.campaignId;
     const orderCampId = orderCampaignId || (orderCampaignName && /^\d+$/.test(orderCampaignName) ? orderCampaignName : null);
-    if (orderCampId && orderCampId !== campaignId) {
+    if (campaignId && orderCampId && orderCampId !== campaignId) {
       return;
     }
 
     // 1. Direct ID matching (accurate)
-    if (orderCampaignId && campaignId === orderCampaignId) {
+    if (orderAdSetId && adSetId === orderAdSetId) {
       isMatched = true;
     } else if (orderAdId && adIds.includes(orderAdId)) {
       isMatched = true;
-    } else if (orderAdSetId && adSetIds.includes(orderAdSetId)) {
-      isMatched = true;
     }
-    // 1.5. UTM parameters containing raw IDs (e.g. utm_campaign={{campaign.id}} parameters)
-    else if (orderCampaignName && orderCampaignName.trim() === campaignId) {
+    // 1.5. UTM parameters containing raw IDs (e.g. utm_term={{adset.id}} or utm_content={{ad.id}})
+    else if (orderTerm && orderTerm.trim() === adSetId) {
       isMatched = true;
     } else if (orderContent && adIds.includes(orderContent.trim())) {
       isMatched = true;
-    } else if (orderTerm && adSetIds.includes(orderTerm.trim())) {
+    }
+    // 2. Fuzzy Ad Set name matching (using utm_term as typical for adset level)
+    else if (targetAdSetNameNorm && orderTermNorm && (orderTermNorm.includes(targetAdSetNameNorm) || targetAdSetNameNorm.includes(orderTermNorm))) {
       isMatched = true;
     }
-    // 2. Fuzzy Campaign name matching
-    else if (targetCampaignNorm && orderCampaignNorm && (orderCampaignNorm.includes(targetCampaignNorm) || targetCampaignNorm.includes(orderCampaignNorm))) {
-      isMatched = true;
-    }
-    // 3. Fuzzy Ad / Ad Set name matching
+    // 3. Fuzzy Ad name matching (using utm_content as typical for ad level)
     else if (orderContentNorm && normalizedAdNames.some(an => orderContentNorm.includes(an) || an.includes(orderContentNorm))) {
       isMatched = true;
     }
-    else if (orderTermNorm && normalizedAdSetNames.some(asn => orderTermNorm.includes(asn) || asn.includes(orderTermNorm))) {
-      isMatched = true;
-    }
-
-    const isMetaSource = (o.attribution?.utmSource || '').toLowerCase().includes('fac') ||
-      (o.attribution?.utmSource || '').toLowerCase().includes('fb') ||
-      (o.landingSite || '').toLowerCase().includes('fbclid') ||
-      (o.landingSite || '').toLowerCase().includes('utm_source=fac') ||
-      (o.landingSite || '').toLowerCase().includes('utm_source=fb');
-
-
 
     if (isMatched) {
-      // Find line items price sum
       const orderPrice = o.totalPrice || 0;
       shopifyRevenue += orderPrice;
       matchedOrders.push({
@@ -201,20 +185,10 @@ export async function calculateCampaignPerformance({ shopDomain, campaignId, sta
   const trueROAS = totalSpend > 0 ? shopifyRevenue / totalSpend : 0;
   const metaROAS = totalSpend > 0 ? totalRevenue / totalSpend : 0;
 
-  if (totalSpend > 5000 && trueROAS < 1.0) {
-    hasGap = true;
-    wastedSpend = totalSpend;
-    warnings.push({
-      type: 'LOW_ROAS',
-      severity: 'HIGH',
-      message: `Low ROAS (${trueROAS.toFixed(2)}x) with high campaign spend (${formatCurrencyLabel(totalSpend, currencyCode)}). Consider pausing or optimizing targeting.`
-    });
-  }
-
   return {
-    campaignId,
-    campaignName,
-    campaignStatus,
+    adSetId,
+    adSetName,
+    adSetStatus,
     metaSpend: totalSpend,
     metaClicks: totalClicks,
     metaImpressions: totalImpressions,

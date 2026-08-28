@@ -25,6 +25,7 @@ export function MetaCampaignDetail({
   onLoadMore,
   onBack,
   onAdSetClick,
+  onAuditClick,
   currencyCode = 'USD',
 }) {
   const formatCurrency = (amount) => {
@@ -132,6 +133,7 @@ export function MetaCampaignDetail({
           data={adSets}
           loading={loading}
           onAdSetClick={onAdSetClick}
+          onAuditClick={onAuditClick}
           currencyCode={currencyCode}
         />
 

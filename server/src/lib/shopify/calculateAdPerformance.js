@@ -2,8 +2,10 @@ import ShopifyOrder from '../../models/ShopifyOrder.js';
 import AdMetadata from '../../models/AdMetadata.js';
 import DailyAdInsight from '../../models/DailyAdInsight.js';
 
-// Aggregates and calculates campaign-level ROAS, matched Shopify sales, daily breakdown, and health alerts.
-export async function calculateCampaignPerformance({ shopDomain, campaignId, startDate, endDate, currencyCode = 'PKR' }) {
+/**
+ * Aggregates and calculates ad-level ROAS, matched Shopify sales, daily breakdown, and KPIs.
+ */
+export async function calculateAdPerformance({ shopDomain, adId, startDate, endDate, currencyCode = 'PKR' }) {
   // 1. Resolve dates
   let sinceDate = new Date();
   sinceDate.setDate(sinceDate.getDate() - 30);
@@ -16,17 +18,14 @@ export async function calculateCampaignPerformance({ shopDomain, campaignId, sta
   untilDate.setUTCHours(23, 59, 59, 999);
 
   // 2. Load Meta structures, insights, and Shopify orders
-  const dbMeta = await AdMetadata.find({ storeUrl: shopDomain, campaignId });
+  const dbMeta = await AdMetadata.find({ storeUrl: shopDomain, adId });
 
-
-  const adIds = dbMeta.map(m => m.adId).filter(Boolean);
-  const adSetIds = Array.from(new Set(dbMeta.map(m => m.adSetId).filter(Boolean)));
-  const adNames = dbMeta.map(m => m.adName || '').filter(Boolean);
-  const adSetNames = Array.from(new Set(dbMeta.map(m => m.adSetName || '').filter(Boolean)));
+  const adName = dbMeta[0]?.adName || 'N/A';
+  const adStatus = dbMeta[0]?.adStatus || 'UNKNOWN';
 
   const dbInsights = await DailyAdInsight.find({
     storeUrl: shopDomain,
-    adId: { $in: adIds },
+    adId: adId,
     date: { $gte: sinceDate, $lte: untilDate }
   });
 
@@ -35,7 +34,7 @@ export async function calculateCampaignPerformance({ shopDomain, campaignId, sta
     createdAt: { $gte: sinceDate, $lte: untilDate }
   });
 
-  // 3. Aggregate campaign-level Meta metrics
+  // 3. Aggregate ad-level Meta metrics
   let totalSpend = 0;
   let totalClicks = 0;
   let totalImpressions = 0;
@@ -50,10 +49,7 @@ export async function calculateCampaignPerformance({ shopDomain, campaignId, sta
     totalRevenue += ins.conversionValue || 0;
   });
 
-  const campaignName = dbMeta[0]?.campaignName || 'N/A';
-  const campaignStatus = dbMeta[0]?.campaignStatus || 'UNKNOWN';
-
-  // 4. Find matched Shopify orders for this campaign
+  // 4. Find matched Shopify orders for this ad
   const normalizeStr = (str) => {
     try {
       return decodeURIComponent(str || '').toLowerCase().replace(/[\s\-_]/g, '');
@@ -61,17 +57,14 @@ export async function calculateCampaignPerformance({ shopDomain, campaignId, sta
       return (str || '').toLowerCase().replace(/[\s\-_]/g, '');
     }
   };
-  const targetCampaignNorm = normalizeStr(campaignName);
-  const normalizedAdNames = adNames.map(name => normalizeStr(name)).filter(Boolean);
-  const normalizedAdSetNames = adSetNames.map(name => normalizeStr(name)).filter(Boolean);
 
-
+  const targetAdNameNorm = normalizeStr(adName);
 
   const matchedOrders = [];
   let shopifyRevenue = 0;
 
   dbOrders.forEach(o => {
-    if (o.cancelledAt !== null) return;
+    if (o.cancelledAt !== null && o.cancelledAt !== undefined) return;
 
     let isMatched = false;
     let orderSource = (o.attribution?.utmSource || '').trim();
@@ -98,54 +91,43 @@ export async function calculateCampaignPerformance({ shopDomain, campaignId, sta
       } catch { }
     }
 
-    const orderCampaignNorm = normalizeStr(orderCampaignName);
     const orderContentNorm = normalizeStr(orderContent);
     const orderTermNorm = normalizeStr(orderTerm);
 
-    // Guard clause: If the order explicitly specifies a different campaign ID, do not match it to this campaign
+    // Guard clause: If the order explicitly specifies a different ad ID, ad set ID, or campaign ID, skip matching it
+    const orderAId = orderAdId || (orderContent && /^\d+$/.test(orderContent) ? orderContent : null);
+    if (orderAId && orderAId !== adId) {
+      return;
+    }
+    const adSetId = dbMeta[0]?.adSetId;
+    const orderAsId = orderAdSetId || (orderTerm && /^\d+$/.test(orderTerm) ? orderTerm : null);
+    if (adSetId && orderAsId && orderAsId !== adSetId) {
+      return;
+    }
+    const campaignId = dbMeta[0]?.campaignId;
     const orderCampId = orderCampaignId || (orderCampaignName && /^\d+$/.test(orderCampaignName) ? orderCampaignName : null);
-    if (orderCampId && orderCampId !== campaignId) {
+    if (campaignId && orderCampId && orderCampId !== campaignId) {
       return;
     }
 
     // 1. Direct ID matching (accurate)
-    if (orderCampaignId && campaignId === orderCampaignId) {
-      isMatched = true;
-    } else if (orderAdId && adIds.includes(orderAdId)) {
-      isMatched = true;
-    } else if (orderAdSetId && adSetIds.includes(orderAdSetId)) {
+    if (orderAdId && adId === orderAdId) {
       isMatched = true;
     }
-    // 1.5. UTM parameters containing raw IDs (e.g. utm_campaign={{campaign.id}} parameters)
-    else if (orderCampaignName && orderCampaignName.trim() === campaignId) {
+    // 1.5. UTM parameters containing raw IDs (e.g. utm_content={{ad.id}} or utm_term={{ad.id}})
+    else if (orderContent && orderContent.trim() === adId) {
       isMatched = true;
-    } else if (orderContent && adIds.includes(orderContent.trim())) {
-      isMatched = true;
-    } else if (orderTerm && adSetIds.includes(orderTerm.trim())) {
+    } else if (orderTerm && orderTerm.trim() === adId) {
       isMatched = true;
     }
-    // 2. Fuzzy Campaign name matching
-    else if (targetCampaignNorm && orderCampaignNorm && (orderCampaignNorm.includes(targetCampaignNorm) || targetCampaignNorm.includes(orderCampaignNorm))) {
+    // 2. Fuzzy Ad name matching (using utm_content/utm_term as typical for ad level)
+    else if (targetAdNameNorm && orderContentNorm && (orderContentNorm.includes(targetAdNameNorm) || targetAdNameNorm.includes(orderContentNorm))) {
+      isMatched = true;
+    } else if (targetAdNameNorm && orderTermNorm && (orderTermNorm.includes(targetAdNameNorm) || targetAdNameNorm.includes(orderTermNorm))) {
       isMatched = true;
     }
-    // 3. Fuzzy Ad / Ad Set name matching
-    else if (orderContentNorm && normalizedAdNames.some(an => orderContentNorm.includes(an) || an.includes(orderContentNorm))) {
-      isMatched = true;
-    }
-    else if (orderTermNorm && normalizedAdSetNames.some(asn => orderTermNorm.includes(asn) || asn.includes(orderTermNorm))) {
-      isMatched = true;
-    }
-
-    const isMetaSource = (o.attribution?.utmSource || '').toLowerCase().includes('fac') ||
-      (o.attribution?.utmSource || '').toLowerCase().includes('fb') ||
-      (o.landingSite || '').toLowerCase().includes('fbclid') ||
-      (o.landingSite || '').toLowerCase().includes('utm_source=fac') ||
-      (o.landingSite || '').toLowerCase().includes('utm_source=fb');
-
-
 
     if (isMatched) {
-      // Find line items price sum
       const orderPrice = o.totalPrice || 0;
       shopifyRevenue += orderPrice;
       matchedOrders.push({
@@ -159,7 +141,13 @@ export async function calculateCampaignPerformance({ shopDomain, campaignId, sta
         utmCampaign: orderCampaignName,
         utmContent: orderContent,
         utmTerm: orderTerm,
-        clickId: o.attribution?.clickId || ''
+        clickId: o.attribution?.clickId || '',
+        lineItems: o.lineItems?.map(li => ({
+          product_id: li.productId,
+          variant_id: li.variantId,
+          quantity: li.quantity,
+          price: li.price
+        })) || []
       });
     }
   });
@@ -174,18 +162,19 @@ export async function calculateCampaignPerformance({ shopDomain, campaignId, sta
   dbInsights.forEach(ins => {
     const dateStr = ins.date.toISOString().split('T')[0];
     if (!dailyMap[dateStr]) {
-      dailyMap[dateStr] = { date: dateStr, spend: 0, clicks: 0, conversions: 0, shopifyConversions: 0, shopifyRevenue: 0 };
+      dailyMap[dateStr] = { date: dateStr, spend: 0, clicks: 0, conversions: 0, metaRevenue: 0, shopifyConversions: 0, shopifyRevenue: 0 };
     }
     dailyMap[dateStr].spend += ins.spend || 0;
     dailyMap[dateStr].clicks += ins.clicks || 0;
     dailyMap[dateStr].conversions += ins.conversions || 0;
+    dailyMap[dateStr].metaRevenue += ins.conversionValue || 0;
   });
 
   // Map matched orders to daily breakdown
   matchedOrders.forEach(o => {
     const dateStr = new Date(o.createdAt).toISOString().split('T')[0];
     if (!dailyMap[dateStr]) {
-      dailyMap[dateStr] = { date: dateStr, spend: 0, clicks: 0, conversions: 0, shopifyConversions: 0, shopifyRevenue: 0 };
+      dailyMap[dateStr] = { date: dateStr, spend: 0, clicks: 0, conversions: 0, metaRevenue: 0, shopifyConversions: 0, shopifyRevenue: 0 };
     }
     dailyMap[dateStr].shopifyConversions++;
     dailyMap[dateStr].shopifyRevenue += o.totalPrice;
@@ -193,28 +182,13 @@ export async function calculateCampaignPerformance({ shopDomain, campaignId, sta
 
   const dailySpendBreakdown = Object.values(dailyMap).sort((a, b) => new Date(b.date) - new Date(a.date));
 
-  // 6. Generate health checks / warnings
-  const warnings = [];
-  let hasGap = false;
-  let wastedSpend = 0;
-
   const trueROAS = totalSpend > 0 ? shopifyRevenue / totalSpend : 0;
   const metaROAS = totalSpend > 0 ? totalRevenue / totalSpend : 0;
 
-  if (totalSpend > 5000 && trueROAS < 1.0) {
-    hasGap = true;
-    wastedSpend = totalSpend;
-    warnings.push({
-      type: 'LOW_ROAS',
-      severity: 'HIGH',
-      message: `Low ROAS (${trueROAS.toFixed(2)}x) with high campaign spend (${formatCurrencyLabel(totalSpend, currencyCode)}). Consider pausing or optimizing targeting.`
-    });
-  }
-
   return {
-    campaignId,
-    campaignName,
-    campaignStatus,
+    adId,
+    adName,
+    adStatus,
     metaSpend: totalSpend,
     metaClicks: totalClicks,
     metaImpressions: totalImpressions,
@@ -225,22 +199,6 @@ export async function calculateCampaignPerformance({ shopDomain, campaignId, sta
     trueROAS,
     metaROAS,
     matchedOrders,
-    dailySpendBreakdown,
-    gapChecks: {
-      hasGap,
-      wastedSpend,
-      warnings
-    }
+    dailySpendBreakdown
   };
-}
-
-function formatCurrencyLabel(amount, currencyCode) {
-  try {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: currencyCode,
-    }).format(amount);
-  } catch {
-    return `${currencyCode} ${amount.toFixed(2)}`;
-  }
 }

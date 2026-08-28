@@ -14,7 +14,10 @@ import {
   syncProductsFromShopify,
   syncOrdersFromShopify,
   calculateCatalogPerformance,
-  calculateCampaignPerformance
+  calculateCampaignPerformance,
+  calculateAdSetPerformance,
+  calculateAdPerformance,
+  getOrderChannel
 } from '../lib/shopify/index.js';
 
 const router = Router();
@@ -329,6 +332,267 @@ router.get('/campaign-performance', async (req, res) => {
   } catch (error) {
     console.error("[Shopify API Campaign Performance Error]", error);
     return res.status(500).json({ error: error.message || 'Failed to calculate campaign performance' });
+  }
+});
+
+// GET /api/shopify/adset-performance
+router.get('/adset-performance', async (req, res) => {
+  try {
+    const { adset_id, start_date, end_date, currency, shopify_url } = req.query;
+    if (!adset_id) {
+      return res.status(400).json({ error: "Missing adset_id query parameter" });
+    }
+
+    const shopDomain = shopify_url ? sanitizeShopUrl(shopify_url) : 'OMS';
+    const merchant = await Merchant.findOne({ storeUrl: shopDomain });
+    if (!merchant) {
+      return res.status(404).json({ error: "Merchant not found" });
+    }
+
+    const result = await calculateAdSetPerformance({
+      shopDomain,
+      adSetId: adset_id,
+      startDate: start_date,
+      endDate: end_date,
+      currencyCode: currency || 'PKR'
+    });
+
+    return res.json({
+      success: true,
+      data: result
+    });
+  } catch (error) {
+    console.error("[Shopify API Ad Set Performance Error]", error);
+    return res.status(500).json({ error: error.message || 'Failed to calculate ad set performance' });
+  }
+});
+
+// GET /api/shopify/channel-orders
+router.get('/channel-orders', async (req, res) => {
+  try {
+    const { channel, start_date, end_date, shopify_url, page = 1, limit = 50 } = req.query;
+    if (!channel) {
+      return res.status(400).json({ error: "Missing channel query parameter" });
+    }
+
+    const shopDomain = shopify_url ? sanitizeShopUrl(shopify_url) : 'OMS';
+
+    // Resolve date boundary
+    let sinceDate = new Date();
+    sinceDate.setDate(sinceDate.getDate() - 30);
+    let untilDate = new Date();
+
+    if (start_date) sinceDate = new Date(start_date);
+    if (end_date) untilDate = new Date(end_date);
+
+    sinceDate.setUTCHours(0, 0, 0, 0);
+    untilDate.setUTCHours(23, 59, 59, 999);
+
+    const dbOrders = await ShopifyOrder.find({
+      storeUrl: shopDomain,
+      createdAt: { $gte: sinceDate, $lte: untilDate },
+      cancelledAt: null
+    }).sort({ createdAt: -1 });
+
+    // Filter by channel
+    const filteredOrders = dbOrders.filter(o => {
+      if (channel === 'Store Total') return true;
+      const orderChan = getOrderChannel(o.attribution?.utmSource || '', o.referringSite || '', o.attribution?.clickId || '');
+      return orderChan.toLowerCase() === channel.toLowerCase();
+    });
+
+    // Pagination
+    const pageNum = parseInt(page, 10);
+    const limitNum = parseInt(limit, 10);
+    const startIndex = (pageNum - 1) * limitNum;
+    const endIndex = pageNum * limitNum;
+
+    const paginatedOrders = filteredOrders.slice(startIndex, endIndex);
+
+    // Extract unique IDs for batch queries
+    const campaignIds = new Set();
+    const adSetIds = new Set();
+    const adIds = new Set();
+
+    paginatedOrders.forEach(o => {
+      const attr = o.attribution;
+      if (attr) {
+        if (attr.campaignId) campaignIds.add(attr.campaignId);
+        if (attr.utmCampaign && /^\d+$/.test(attr.utmCampaign)) campaignIds.add(attr.utmCampaign);
+
+        if (attr.adSetId) adSetIds.add(attr.adSetId);
+        if (attr.utmTerm && /^\d+$/.test(attr.utmTerm)) adSetIds.add(attr.utmTerm);
+
+        if (attr.adId) adIds.add(attr.adId);
+        if (attr.utmContent && /^\d+$/.test(attr.utmContent)) adIds.add(attr.utmContent);
+      }
+    });
+
+    const campaignIdArr = Array.from(campaignIds);
+    const adSetIdArr = Array.from(adSetIds);
+    const adIdArr = Array.from(adIds);
+
+    let metadataList = [];
+    let insightsAgg = [];
+
+    if (campaignIdArr.length > 0 || adSetIdArr.length > 0 || adIdArr.length > 0) {
+      metadataList = await AdMetadata.find({
+        storeUrl: shopDomain,
+        $or: [
+          { campaignId: { $in: campaignIdArr } },
+          { adSetId: { $in: adSetIdArr } },
+          { adId: { $in: adIdArr } }
+        ]
+      }).lean();
+    }
+
+    if (adIdArr.length > 0) {
+      insightsAgg = await DailyAdInsight.aggregate([
+        {
+          $match: {
+            storeUrl: shopDomain,
+            adId: { $in: adIdArr },
+            spend: { $gt: 0 }
+          }
+        },
+        {
+          $group: {
+            _id: "$adId",
+            firstSpend: { $min: "$date" },
+            lastSpend: { $max: "$date" }
+          }
+        }
+      ]);
+    }
+
+    // Create maps for quick lookup
+    const metadataMapByCampaign = new Map();
+    const metadataMapByAdSet = new Map();
+    const metadataMapByAd = new Map();
+
+    metadataList.forEach(m => {
+      if (m.campaignId) metadataMapByCampaign.set(m.campaignId, m);
+      if (m.adSetId) metadataMapByAdSet.set(m.adSetId, m);
+      if (m.adId) metadataMapByAd.set(m.adId, m);
+    });
+
+    const adSpendDatesMap = new Map();
+    insightsAgg.forEach(i => {
+      adSpendDatesMap.set(i._id, {
+        firstSpend: i.firstSpend,
+        lastSpend: i.lastSpend
+      });
+    });
+
+    const formattedOrders = paginatedOrders.map(o => {
+      const attr = o.attribution || {};
+      const orderCampaignId = attr.campaignId || (attr.utmCampaign && /^\d+$/.test(attr.utmCampaign) ? attr.utmCampaign : null);
+      const orderAdSetId = attr.adSetId || (attr.utmTerm && /^\d+$/.test(attr.utmTerm) ? attr.utmTerm : null);
+      const orderAdId = attr.adId || (attr.utmContent && /^\d+$/.test(attr.utmContent) ? attr.utmContent : null);
+
+      const campaignMeta = orderCampaignId ? metadataMapByCampaign.get(orderCampaignId) : null;
+      const adSetMeta = orderAdSetId ? metadataMapByAdSet.get(orderAdSetId) : null;
+      const adMeta = orderAdId ? metadataMapByAd.get(orderAdId) : null;
+      const spendDates = orderAdId ? adSpendDatesMap.get(orderAdId) : null;
+
+      return {
+        orderId: o.orderId,
+        orderNumber: o.orderNumber || o.name || '',
+        createdAt: o.createdAt,
+        email: o.email || '—',
+        totalPrice: o.totalPrice,
+        currency: o.currency,
+        attribution: {
+          utmSource: attr.utmSource || '',
+          utmMedium: attr.utmMedium || '',
+          utmCampaign: attr.utmCampaign || '',
+          utmContent: attr.utmContent || '',
+          utmTerm: attr.utmTerm || '',
+          clickId: attr.clickId || '',
+          adId: attr.adId || '',
+          adName: attr.adName || '',
+          campaignId: attr.campaignId || '',
+          adSetId: attr.adSetId || '',
+          attributionMethod: attr.attributionMethod || '',
+          campaignMeta: campaignMeta ? {
+            id: campaignMeta.campaignId,
+            name: campaignMeta.campaignName,
+            status: campaignMeta.campaignStatus,
+            startDate: campaignMeta.campaignStartDate,
+            endDate: campaignMeta.campaignEndDate
+          } : null,
+          adSetMeta: adSetMeta ? {
+            id: adSetMeta.adSetId,
+            name: adSetMeta.adSetName,
+            status: adSetMeta.adSetStatus,
+            startDate: adSetMeta.adSetStartDate,
+            endDate: adSetMeta.adSetEndDate
+          } : null,
+          adMeta: adMeta ? {
+            id: adMeta.adId,
+            name: adMeta.adName,
+            status: adMeta.adStatus,
+            createdTime: adMeta.adCreatedTime
+          } : null,
+          adSpendDates: spendDates ? {
+            firstSpend: spendDates.firstSpend,
+            lastSpend: spendDates.lastSpend
+          } : null
+        },
+        lineItems: o.lineItems?.map(li => ({
+          product_id: li.productId,
+          variant_id: li.variantId,
+          quantity: li.quantity,
+          price: li.price
+        })) || [],
+        referringSite: o.referringSite || '',
+        landingSite: o.landingSite || ''
+      };
+    });
+
+    return res.json({
+      success: true,
+      totalCount: filteredOrders.length,
+      page: pageNum,
+      limit: limitNum,
+      totalPages: Math.ceil(filteredOrders.length / limitNum),
+      data: formattedOrders
+    });
+  } catch (error) {
+    console.error("[Shopify API Channel Orders Error]", error);
+    return res.status(500).json({ error: error.message || 'Failed to fetch channel orders' });
+  }
+});
+
+// GET /api/shopify/ad-performance
+router.get('/ad-performance', async (req, res) => {
+  try {
+    const { ad_id, start_date, end_date, currency, shopify_url } = req.query;
+    if (!ad_id) {
+      return res.status(400).json({ error: "Missing ad_id query parameter" });
+    }
+
+    const shopDomain = shopify_url ? sanitizeShopUrl(shopify_url) : 'OMS';
+    const merchant = await Merchant.findOne({ storeUrl: shopDomain });
+    if (!merchant) {
+      return res.status(404).json({ error: "Merchant not found" });
+    }
+
+    const result = await calculateAdPerformance({
+      shopDomain,
+      adId: ad_id,
+      startDate: start_date,
+      endDate: end_date,
+      currencyCode: currency || 'PKR'
+    });
+
+    return res.json({
+      success: true,
+      data: result
+    });
+  } catch (error) {
+    console.error("[Shopify API Ad Performance Error]", error);
+    return res.status(500).json({ error: error.message || 'Failed to calculate ad performance' });
   }
 });
 

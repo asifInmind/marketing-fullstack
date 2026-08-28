@@ -74,6 +74,19 @@ const ShopifyOrderSchema = new mongoose.Schema({
       enum: ['fbclid_match', 'utm_match', 'ip_match', 'organic']
     }
   },
+  customerJourney: {
+    daysToConversion: { type: Number, default: 0 },
+    momentsCount: { type: Number, default: 0 },
+    firstVisit: {
+      landingPage: { type: String, default: '' },
+      referringSite: { type: String, default: '' },
+      utmSource: { type: String, default: '' },
+      utmMedium: { type: String, default: '' },
+      utmCampaign: { type: String, default: '' },
+      utmContent: { type: String, default: '' },
+      utmTerm: { type: String, default: '' }
+    }
+  },
   sentToMeta: {
     type: Boolean,
     default: false

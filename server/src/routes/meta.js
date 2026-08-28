@@ -116,7 +116,7 @@ function getMarkerRange(marker) {
 }
 
 // Helper to compile and filter Meta Insights/Metadata to ACTIVE status only
-function compileMetaDashboardResponse(dbMeta, dbInsights) {
+function compileMetaDashboardResponse(dbMeta, dbInsights, dbOrders = []) {
   const campaignMap = {};
   const adSetMap = {};
   const adsList = [];
@@ -152,11 +152,12 @@ function compileMetaDashboardResponse(dbMeta, dbInsights) {
         targeting: parsedTargeting || existing?.targeting || null,
         campaignId: m.campaignId || existing?.campaignId || '',
         campaignName: m.campaignName || existing?.campaignName || '',
+        campaignStatus: m.campaignStatus || existing?.campaignStatus || '',
         start_time: m.adSetStartDate || existing?.start_time || '',
         end_time: m.adSetEndDate || existing?.end_time || ''
       };
     }
-
+ 
     const creative = m.creative ? {
       id: m.creative.creativeId,
       name: m.creative.creativeName,
@@ -168,7 +169,7 @@ function compileMetaDashboardResponse(dbMeta, dbInsights) {
       headline: m.creative.headline,
       description: m.creative.description
     } : null;
-
+ 
     adsList.push({
       id: m.adId,
       name: m.adName,
@@ -176,29 +177,36 @@ function compileMetaDashboardResponse(dbMeta, dbInsights) {
       campaignId: m.campaignId,
       adSetId: m.adSetId,
       campaignName: m.campaignName,
+      campaignStatus: m.campaignStatus || '',
       adGroupName: m.adSetName,
       creative: creative,
       created_time: m.adCreatedTime || m.createdAt || m.lastUpdated
     });
-
+ 
     if (creative) {
       creativesMap[creative.id] = creative;
     }
   });
-
-  // Back-fill campaign and adset names across objects to resolve dirty database caches
+ 
+  // Back-fill campaign and adset names/status across objects to resolve dirty database caches
   adsList.forEach(ad => {
     if (!ad.campaignName && ad.campaignId && campaignMap[ad.campaignId]?.name) {
       ad.campaignName = campaignMap[ad.campaignId].name;
+    }
+    if (!ad.campaignStatus && ad.campaignId && campaignMap[ad.campaignId]?.status) {
+      ad.campaignStatus = campaignMap[ad.campaignId].status;
     }
     if (!ad.adGroupName && ad.adSetId && adSetMap[ad.adSetId]?.name) {
       ad.adGroupName = adSetMap[ad.adSetId].name;
     }
   });
-
+ 
   Object.values(adSetMap).forEach(adSet => {
     if (!adSet.campaignName && adSet.campaignId && campaignMap[adSet.campaignId]?.name) {
       adSet.campaignName = campaignMap[adSet.campaignId].name;
+    }
+    if (!adSet.campaignStatus && adSet.campaignId && campaignMap[adSet.campaignId]?.status) {
+      adSet.campaignStatus = campaignMap[adSet.campaignId].status;
     }
   });
 
@@ -206,12 +214,6 @@ function compileMetaDashboardResponse(dbMeta, dbInsights) {
   const adInsights = {};
   const adSetInsights = {};
   const campaignInsights = {};
-
-  let totalSpend = 0;
-  let totalImpressions = 0;
-  let totalClicks = 0;
-  let totalConversions = 0;
-  let totalRevenue = 0;
 
   dbInsights.forEach(insight => {
     const metaAd = dbMeta.find(m => m.adId === insight.adId);
@@ -253,18 +255,101 @@ function compileMetaDashboardResponse(dbMeta, dbInsights) {
       campaignInsights[campaignId].conversions += insight.conversions;
       campaignInsights[campaignId].conversion_values += insight.conversionValue;
     }
+  });
 
-    // Grand Total Sum (ONLY sum currently active campaigns/adsets/ads for Metrics Cards!)
-    const isAdActive = metaAd.adStatus && metaAd.adStatus.toUpperCase() === 'ACTIVE';
-    const isAdSetActive = metaAd.adSetStatus && metaAd.adSetStatus.toUpperCase() === 'ACTIVE';
-    const isCampaignActive = metaAd.campaignStatus && metaAd.campaignStatus.toUpperCase() === 'ACTIVE';
+  // Match Shopify orders to specific ads to count active matched orders
+  const normalizeStr = (str) => {
+    try {
+      return decodeURIComponent(str || '').toLowerCase().replace(/[\s\-_]/g, '');
+    } catch {
+      return (str || '').toLowerCase().replace(/[\s\-_]/g, '');
+    }
+  };
+
+  const adOrdersMap = {};
+  dbOrders.forEach(o => {
+    if (o.cancelledAt !== null && o.cancelledAt !== undefined) return;
+    let matchedAdId = null;
+    let orderAdId = (o.attribution?.adId || '').trim();
+    let orderContent = (o.attribution?.utmContent || '').trim();
+    let orderTerm = (o.attribution?.utmTerm || '').trim();
+
+    if (o.landingSite) {
+      try {
+        const url = new URL(o.landingSite, 'https://fallback.com');
+        if (!orderAdId) orderAdId = url.searchParams.get('ad_id') || url.searchParams.get('fb_ad_id') || '';
+        if (!orderContent) orderContent = url.searchParams.get('utm_content') || '';
+        if (!orderTerm) orderTerm = url.searchParams.get('utm_term') || '';
+      } catch {}
+    }
+
+    const orderContentNorm = normalizeStr(orderContent);
+    const orderTermNorm = normalizeStr(orderTerm);
+
+    for (const ad of adsList) {
+      const adId = ad.id;
+      const targetAdNameNorm = normalizeStr(ad.name);
+
+      let isMatched = false;
+      if (orderAdId && adId === orderAdId) {
+        isMatched = true;
+      } else if (orderContent && orderContent.trim() === adId) {
+        isMatched = true;
+      } else if (orderTerm && orderTerm.trim() === adId) {
+        isMatched = true;
+      } else if (targetAdNameNorm && orderContentNorm && (orderContentNorm.includes(targetAdNameNorm) || targetAdNameNorm.includes(orderContentNorm))) {
+        isMatched = true;
+      } else if (targetAdNameNorm && orderTermNorm && (orderTermNorm.includes(targetAdNameNorm) || targetAdNameNorm.includes(orderTermNorm))) {
+        isMatched = true;
+      }
+
+      if (isMatched) {
+        matchedAdId = adId;
+        break;
+      }
+    }
+
+    if (matchedAdId) {
+      if (!adOrdersMap[matchedAdId]) adOrdersMap[matchedAdId] = [];
+      adOrdersMap[matchedAdId].push(o);
+    }
+  });
+
+  // Calculate Grand Total Sum of Active & Spending items dynamically using the fully resolved adsList
+  let totalSpend = 0;
+  let totalImpressions = 0;
+  let totalClicks = 0;
+  let totalConversions = 0;
+  let totalRevenue = 0;
+  let totalShopifyConversions = 0;
+  let totalShopifyRevenue = 0;
+
+  adsList.forEach(ad => {
+    const matched = adOrdersMap[ad.id] || [];
+    ad.shopifyConversions = matched.length;
+    ad.shopifyRevenue = matched.reduce((sum, o) => sum + (o.totalPrice || 0), 0);
+
+    const statusUpper = ad.status?.toUpperCase();
+    const isAdActive = statusUpper === 'ACTIVE' || statusUpper === 'ENABLED';
     
-    if (isAdActive && isAdSetActive && isCampaignActive) {
-      totalSpend += insight.spend;
-      totalImpressions += insight.impressions;
-      totalClicks += insight.clicks;
-      totalConversions += insight.conversions;
-      totalRevenue += insight.conversionValue;
+    const adSet = adSetMap[ad.adSetId];
+    const adSetStatusUpper = adSet?.status?.toUpperCase();
+    const isAdSetActive = adSetStatusUpper === 'ACTIVE' || adSetStatusUpper === 'ENABLED';
+    
+    const campaignStatusUpper = ad.campaignStatus?.toUpperCase();
+    const isCampaignActive = campaignStatusUpper === 'ACTIVE' || campaignStatusUpper === 'ENABLED';
+
+    // Only sum active items that have spent budget
+    const insights = adInsights[ad.id] || { spend: 0, impressions: 0, clicks: 0, conversions: 0, conversion_values: 0 };
+    
+    if (isAdActive && isAdSetActive && isCampaignActive && insights.spend > 0) {
+      totalSpend += insights.spend;
+      totalImpressions += insights.impressions;
+      totalClicks += insights.clicks;
+      totalConversions += insights.conversions;
+      totalRevenue += insights.conversion_values;
+      totalShopifyConversions += ad.shopifyConversions;
+      totalShopifyRevenue += ad.shopifyRevenue;
     }
   });
 
@@ -289,6 +374,8 @@ function compileMetaDashboardResponse(dbMeta, dbInsights) {
       totalClicks,
       totalConversions,
       totalRevenue,
+      totalShopifyConversions,
+      totalShopifyRevenue,
       avgCTR,
       avgCPC,
       avgROAS,
@@ -434,6 +521,8 @@ router.get('/', async (req, res) => {
       }
     }
 
+
+
     const { sinceDate, untilDate } = getMetaDateRange(datePreset, since, until);
 
     const forceRefresh = req.query.refresh === 'true';
@@ -457,7 +546,15 @@ router.get('/', async (req, res) => {
 
           if (dbMeta && dbMeta.length > 0 && hasAllStructures && dbInsights.length > 0) {
             console.log(`[Meta API Route] Cache HIT: Returning filtered active structures and insights from MongoDB`);
-            const payload = compileMetaDashboardResponse(dbMeta, dbInsights);
+            
+            // Fetch Shopify orders to compute matched conversions for active ads
+            const ShopifyOrder = (await import('../models/ShopifyOrder.js')).default;
+            const dbOrders = await ShopifyOrder.find({
+              storeUrl,
+              createdAt: { $gte: sinceDate, $lte: untilDate }
+            });
+
+            const payload = compileMetaDashboardResponse(dbMeta, dbInsights, dbOrders);
             return res.json({
               success: true,
               data: payload
@@ -611,7 +708,38 @@ router.get('/', async (req, res) => {
       date: { $gte: sinceDate, $lte: untilDate }
     });
     const dbMeta = await AdMetadata.find({ storeUrl });
-    const payload = compileMetaDashboardResponse(dbMeta, dbInsights);
+
+    // Fetch Shopify orders to compute matched conversions for active ads
+    const ShopifyOrder = (await import('../models/ShopifyOrder.js')).default;
+    const dbOrders = await ShopifyOrder.find({
+      storeUrl,
+      createdAt: { $gte: sinceDate, $lte: untilDate }
+    });
+
+    const payload = compileMetaDashboardResponse(dbMeta, dbInsights, dbOrders);
+
+    // Trigger background Conversions API check for any unsent Meta-attributed orders
+    if (storeUrl !== 'unknown') {
+      (async () => {
+        try {
+          const merchant = await Merchant.findOne({ storeUrl });
+          if (merchant) {
+            const ShopifyOrder = (await import('../models/ShopifyOrder.js')).default;
+            const allUnsent = await ShopifyOrder.find({
+              storeUrl,
+              sentToMeta: { $ne: true }
+            });
+            const unsentOrders = allUnsent.filter(o => o.cancelledAt === null || o.cancelledAt === undefined);
+            if (unsentOrders.length > 0) {
+              const { sendOrdersToMetaCapi } = await import('../lib/meta/index.js');
+              await sendOrdersToMetaCapi(merchant, unsentOrders);
+            }
+          }
+        } catch (err) {
+          console.error('[Meta API Route] Background CAPI trigger error:', err.message);
+        }
+      })();
+    }
 
     return res.json({
       success: true,

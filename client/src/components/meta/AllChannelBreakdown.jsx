@@ -7,7 +7,7 @@ import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import Skeleton from '@mui/material/Skeleton';
 
-export function AllChannelBreakdown({ channelBreakdown, totalRevenue, totalOrders, currencyCode = 'USD', loading = false }) {
+export function AllChannelBreakdown({ channelBreakdown, totalRevenue, totalOrders, currencyCode = 'USD', loading = false, onChannelClick }) {
   console.log("[AllChannelBreakdown] Props Received:", { channelBreakdown, totalRevenue, totalOrders });
   const formatCurrency = (amount) => {
     try {
@@ -48,12 +48,22 @@ export function AllChannelBreakdown({ channelBreakdown, totalRevenue, totalOrder
 
           return (
             <Grid item xs={12} sm={6} md={3} key={chan.channel}>
-              <Box sx={{ 
-                p: 2, 
-                border: '1px solid #F1F5F9', 
-                borderRadius: 2,
-                bgcolor: isTotal ? '#F8FAFC' : 'transparent'
-              }}>
+              <Box 
+                onClick={() => onChannelClick && onChannelClick(chan.channel)}
+                sx={{ 
+                  p: 2, 
+                  border: '1px solid #F1F5F9', 
+                  borderRadius: 2,
+                  bgcolor: isTotal ? '#F8FAFC' : 'transparent',
+                  cursor: onChannelClick ? 'pointer' : 'default',
+                  transition: 'all 0.2s ease-in-out',
+                  '&:hover': onChannelClick ? {
+                    borderColor: 'primary.main',
+                    boxShadow: '0 4px 12px rgba(0,0,0,0.05)',
+                    transform: 'translateY(-2px)'
+                  } : {}
+                }}
+              >
                 {loading ? (
                   <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                     <Skeleton variant="text" width="50%" height={16} />

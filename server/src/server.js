@@ -57,6 +57,28 @@ app.get('/health', (req, res) => {
   res.json({ status: 'OK', message: 'AdManager backend is running smoothly.' });
 });
 
+app.get('/api/diag-urls', async (req, res) => {
+  try {
+    const AdMetadata = (await import('./models/AdMetadata.js')).default;
+    const dbMetaDocs = await AdMetadata.find({});
+    const activeAds = dbMetaDocs.filter(ad => ad.adStatus === 'ACTIVE');
+    const result = activeAds.map(ad => ({
+      adId: ad.adId,
+      name: ad.adName,
+      campaignName: ad.campaignName,
+      campaignStatus: ad.campaignStatus,
+      adSetStatus: ad.adSetStatus,
+      finalUrl: ad.creative?.destinationUrl || '',
+      headline: ad.creative?.headline || ''
+    }));
+    res.json({ success: true, activeAds: result });
+  } catch (err) {
+    res.json({ success: false, error: err.message });
+  }
+});
+
+
+
 // Disable browser caching for API routes to ensure filter switches fetch fresh DB data
 app.use('/api', (req, res, next) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');

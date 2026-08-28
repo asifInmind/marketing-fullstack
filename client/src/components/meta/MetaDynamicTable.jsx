@@ -137,6 +137,8 @@ export function MetaDynamicTable({
     audit: "Ads Performance",
   };
 
+  const [adFilter, setAdFilter] = useState('all');
+
   const orderedKeys = useMemo(() => {
     switch (activeTab) {
       case "campaigns":
@@ -153,7 +155,7 @@ export function MetaDynamicTable({
           "conversions",
           "conversionValue",
           "roas",
-          "audit",
+          ...(adFilter === 'active_spending' ? ["audit"] : []),
         ];
 
       case "adSets":
@@ -170,6 +172,7 @@ export function MetaDynamicTable({
           "cost",
           "conversions",
           "roas",
+          ...(adFilter === 'active_spending' ? ["audit"] : []),
         ];
 
       case "ads":
@@ -187,6 +190,7 @@ export function MetaDynamicTable({
           "cost",
           "conversions",
           "roas",
+          ...(adFilter === 'active_spending' ? ["audit"] : []),
         ];
 
       case "shopify":
@@ -205,14 +209,14 @@ export function MetaDynamicTable({
       default:
         return [];
     }
-  }, [activeTab, data]);
+  }, [activeTab, data, adFilter]);
 
   const columns = useMemo(() => {
     return orderedKeys
       .filter((key) => key !== "_id")
       .map((key) => ({
         accessorKey: key,
-        header: key === "audit" && activeTab === "campaigns" ? "Campaign Audit" : (columnNameMap[key] || key),
+        header: key === "audit" ? (activeTab === "campaigns" ? "Campaign Audit" : activeTab === "adSets" ? "Ad Set Audit" : "Audit") : (columnNameMap[key] || key),
         cell: ({ row, getValue }) => {
           const value = getValue();
 
@@ -291,7 +295,7 @@ export function MetaDynamicTable({
             const spend = row.original.cost || 0;
             const statusUpper = row.original.status?.toUpperCase();
             const isActive = statusUpper === "ACTIVE" || statusUpper === "ENABLED";
-            if (isActive && spend > 0 && onAuditClick) {
+            if (adFilter === 'active_spending' && isActive && spend > 0 && onAuditClick) {
               return (
                 <Box sx={{ display: 'flex', justifyContent: 'center' }}>
                   <Button
@@ -308,6 +312,63 @@ export function MetaDynamicTable({
                     }}
                   >
                     Audit Campaign
+                  </Button>
+                </Box>
+              );
+            }
+            return <Box sx={{ display: 'flex', justifyContent: 'center', color: '#94A3B8', fontWeight: 600 }}>—</Box>;
+          }
+
+          if (key === "audit" && activeTab === "adSets") {
+            const spend = row.original.cost || 0;
+            const statusUpper = row.original.status?.toUpperCase();
+            const isActive = statusUpper === "ACTIVE" || statusUpper === "ENABLED";
+            if (adFilter === 'active_spending' && isActive && spend > 0 && onAuditClick) {
+              return (
+                <Box sx={{ display: 'flex', justifyContent: 'center' }}>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    onClick={() => onAuditClick(row.original, "adset")}
+                    className="bg-white text-primary dark:bg-secondary dark:text-white"
+                    sx={{
+                      height: '34px',
+                      textTransform: 'none',
+                      fontSize: '0.85rem',
+                      whiteSpace: 'nowrap',
+                      fontWeight: 600,
+                    }}
+                  >
+                    Audit Ad Set
+                  </Button>
+                </Box>
+              );
+            }
+            return <Box sx={{ display: 'flex', justifyContent: 'center', color: '#94A3B8', fontWeight: 600 }}>—</Box>;
+          }
+
+          if (key === "audit" && activeTab === "ads") {
+            const spend = row.original.cost || 0;
+            const statusUpper = row.original.status?.toUpperCase();
+            const isActive = statusUpper === "ACTIVE" || statusUpper === "ENABLED";
+            const isCampaignActive = row.original.campaignStatus === 'ACTIVE' || row.original.campaignStatus === 'ENABLED';
+            if (adFilter === 'active_spending' && isActive && isCampaignActive && spend > 0 && onAuditClick) {
+              return (
+                <Box sx={{ display: 'flex', justifyContent: 'center' }}>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    onClick={() => onAuditClick(row.original, "ad")}
+                    className="bg-white text-primary dark:bg-secondary dark:text-white"
+                    sx={{
+                      height: '34px',
+                      textTransform: 'none',
+                      fontSize: '0.85rem',
+                      whiteSpace: 'nowrap',
+                      fontWeight: 600,
+                    }}
+                  >
+                    Audit Ad
                   </Button>
                 </Box>
               );
@@ -733,9 +794,7 @@ export function MetaDynamicTable({
           return <span>{String(value)}</span>;
         },
       }));
-  }, [orderedKeys, activeTab, onCampaignClick, onAdSetClick, currencyCode]);
-
-  const [adFilter, setAdFilter] = useState('all');
+  }, [orderedKeys, activeTab, onCampaignClick, onAdSetClick, currencyCode, adFilter]);
   const [pagination, setPagination] = useState({
     pageIndex: 0,
     pageSize: 20,
@@ -755,13 +814,24 @@ export function MetaDynamicTable({
 
     switch (adFilter) {
       case 'active':
-        return data.filter(item => item.status === 'ENABLED' || item.status === 'ACTIVE');
+        return data.filter(item => {
+          const isActive = item.status === 'ENABLED' || item.status === 'ACTIVE';
+          if (activeTab === 'adSets' || activeTab === 'ads') {
+            const isCampaignActive = item.campaignStatus === 'ACTIVE' || item.campaignStatus === 'ENABLED';
+            return isActive && isCampaignActive;
+          }
+          return isActive;
+        });
       case 'spending':
         return data.filter(item => (item.cost || item.spend || 0) > 0);
       case 'active_spending':
         return data.filter(item => {
           const isActive = item.status === 'ENABLED' || item.status === 'ACTIVE';
           const hasSpend = (item.cost || item.spend || 0) > 0;
+          if (activeTab === 'adSets' || activeTab === 'ads') {
+            const isCampaignActive = item.campaignStatus === 'ACTIVE' || item.campaignStatus === 'ENABLED';
+            return isActive && isCampaignActive && hasSpend;
+          }
           return isActive && hasSpend;
         });
       case 'unmatched':
@@ -811,9 +881,34 @@ export function MetaDynamicTable({
         <Box sx={{ p: 2, display: "flex", flexWrap: "wrap", gap: 1, borderBottom: "1px solid rgba(224, 224, 224, 1)" }}>
           {[
             { key: 'all', label: 'All', count: data.length, color: 'default' },
-            { key: 'active', label: 'Active', count: data.filter(a => a.status === 'ENABLED' || a.status === 'ACTIVE').length, color: 'success' },
+            {
+              key: 'active',
+              label: 'Active',
+              count: data.filter(a => {
+                const isActive = a.status === 'ENABLED' || a.status === 'ACTIVE';
+                if (activeTab === 'adSets' || activeTab === 'ads') {
+                  const isCampaignActive = a.campaignStatus === 'ACTIVE' || a.campaignStatus === 'ENABLED';
+                  return isActive && isCampaignActive;
+                }
+                return isActive;
+              }).length,
+              color: 'success'
+            },
             { key: 'spending', label: 'Spending', count: data.filter(a => (a.cost || a.spend || 0) > 0).length, color: 'primary' },
-            { key: 'active_spending', label: 'Active & Spending', count: data.filter(a => (a.status === 'ENABLED' || a.status === 'ACTIVE') && (a.cost || a.spend || 0) > 0).length, color: 'secondary' },
+            {
+              key: 'active_spending',
+              label: 'Active & Spending',
+              count: data.filter(a => {
+                const isActive = a.status === 'ENABLED' || a.status === 'ACTIVE';
+                const hasSpend = (a.cost || a.spend || 0) > 0;
+                if (activeTab === 'adSets' || activeTab === 'ads') {
+                  const isCampaignActive = a.campaignStatus === 'ACTIVE' || a.campaignStatus === 'ENABLED';
+                  return isActive && isCampaignActive && hasSpend;
+                }
+                return isActive && hasSpend;
+              }).length,
+              color: 'secondary'
+            },
             ...((activeTab === "ads" && unmatchedAds && unmatchedAds.length > 0)
               ? [{ key: 'unmatched', label: 'Unmatched', count: data.filter(a => new Set((unmatchedAds || []).map(ua => ua?.id || ua)).has(a.id)).length, color: 'error' }]
               : [])

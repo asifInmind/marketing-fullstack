@@ -1,59 +1,193 @@
 import ShopifyOrder from '../../models/ShopifyOrder.js';
 import CacheMarker from '../../models/CacheMarker.js';
 import Merchant from '../../models/Merchant.js';
-import { parseLinkHeader } from './shopifyCore.js';
+
+// Helper to make fetch requests with exponential backoff on 429 rate limit
+async function fetchWithRetry(url, options, retries = 3, backoff = 1000) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const response = await fetch(url, options);
+      if (response.status === 429) {
+        const retryAfter = response.headers.get('Retry-After');
+        const waitTime = retryAfter ? parseInt(retryAfter, 10) * 1000 : backoff * Math.pow(2, i);
+        console.warn(`[Shopify API] Rate limited (429). Retrying in ${waitTime}ms...`);
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+        continue;
+      }
+      return response;
+    } catch (err) {
+      if (i === retries - 1) throw err;
+      const waitTime = backoff * Math.pow(2, i);
+      console.warn(`[Shopify API] Fetch error: ${err.message}. Retrying in ${waitTime}ms...`);
+      await new Promise(resolve => setTimeout(resolve, waitTime));
+    }
+  }
+}
+
+const ORDERS_QUERY = `
+  query getOrders($first: Int!, $after: String, $query: String) {
+    orders(first: $first, after: $after, query: $query) {
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+      edges {
+        node {
+          id
+          name
+          createdAt
+          totalPriceSet {
+            presentmentMoney {
+              amount
+              currencyCode
+            }
+          }
+          cancelledAt
+          email
+          phone
+          billingAddress {
+            firstName
+            lastName
+            phone
+            city
+            province
+            zip
+            country
+          }
+          shippingAddress {
+            firstName
+            lastName
+            phone
+            city
+            province
+            zip
+            country
+          }
+          customer {
+            firstName
+            lastName
+            phone
+          }
+          customerJourneySummary {
+            daysToConversion
+            momentsCount {
+              count
+            }
+            firstVisit {
+              landingPage
+              referrerUrl
+              utmParameters {
+                source
+                medium
+                campaign
+                content
+                term
+              }
+            }
+            lastVisit {
+              landingPage
+              referrerUrl
+              utmParameters {
+                source
+                medium
+                campaign
+                content
+                term
+              }
+            }
+          }
+          lineItems(first: 50) {
+            edges {
+              node {
+                product {
+                  id
+                }
+                variant {
+                  id
+                }
+                quantity
+                originalUnitPriceSet {
+                  presentmentMoney {
+                    amount
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+`;
 
 export async function syncOrdersFromShopify(shopDomain, shopify_token, startDate, endDate) {
-  let allOrders = [];
-  let nextUrl = new URL(`https://${shopDomain}/admin/api/2024-01/orders.json`);
-  nextUrl.searchParams.set('status', 'any');
-  nextUrl.searchParams.set('limit', '250');
-
+  const allOrders = [];
+  const graphqlUrl = `https://${shopDomain}/admin/api/2024-01/graphql.json`;
+  
+  // Construct search query
+  const queryParts = [];
   if (startDate) {
-    nextUrl.searchParams.set('created_at_min', new Date(startDate).toISOString());
+    queryParts.push(`created_at:>=${new Date(startDate).toISOString()}`);
   }
   if (endDate) {
-    nextUrl.searchParams.set('created_at_max', new Date(endDate).toISOString());
+    queryParts.push(`created_at:<=${new Date(endDate).toISOString()}`);
   }
-
-  console.log(`[Shopify API Route] Syncing orders live from ${nextUrl.toString()}`);
+  const queryStr = queryParts.length > 0 ? queryParts.join(' AND ') : undefined;
 
   let hasNextPage = true;
+  let cursor = null;
   let pageCount = 1;
 
+  console.log(`[Shopify API Route] Syncing orders live from Shopify GraphQL endpoint for ${shopDomain}`);
+
   while (hasNextPage && pageCount <= 10) {
-    const response = await fetch(nextUrl.toString(), {
+    const response = await fetchWithRetry(graphqlUrl, {
+      method: 'POST',
       headers: {
         "X-Shopify-Access-Token": shopify_token,
         "Content-Type": "application/json"
-      }
+      },
+      body: JSON.stringify({
+        query: ORDERS_QUERY,
+        variables: {
+          first: 50, // Grab 50 at a time to stay safe on query complexity limits
+          after: cursor,
+          query: queryStr
+        }
+      })
     });
 
     if (!response.ok) {
       const text = await response.text();
-      throw new Error(`Shopify API returned: ${text}`);
+      throw new Error(`Shopify GraphQL API returned HTTP ${response.status}: ${text}`);
     }
 
-    const data = await response.json();
-    if (data.orders) {
-      allOrders = [...allOrders, ...data.orders];
+    const resJson = await response.json();
+    if (resJson.errors) {
+      throw new Error(`Shopify GraphQL errors: ${JSON.stringify(resJson.errors)}`);
     }
 
-    const linkHeader = response.headers.get('link');
-    const nextPageInfo = parseLinkHeader(linkHeader);
-
-    if (nextPageInfo) {
-      nextUrl = new URL(`https://${shopDomain}/admin/api/2024-01/orders.json`);
-      nextUrl.searchParams.set('page_info', nextPageInfo);
-      nextUrl.searchParams.set('limit', '250');
-      pageCount++;
-    } else {
-      hasNextPage = false;
+    const connection = resJson.data?.orders;
+    if (!connection) {
+      break;
     }
+
+    const edges = connection.edges || [];
+    edges.forEach(edge => {
+      if (edge.node) {
+        allOrders.push(edge.node);
+      }
+    });
+
+    hasNextPage = connection.pageInfo?.hasNextPage || false;
+    cursor = connection.pageInfo?.endCursor || null;
+    pageCount++;
   }
 
   const orderPromises = allOrders.map(order => {
-    const landingSite = order.landing_site || '';
+    const numericId = order.id.split('/').pop();
+    const landingSite = order.customerJourneySummary?.lastVisit?.landingPage || '';
+    
     let utmSource = '';
     let utmMedium = '';
     let utmCampaign = '';
@@ -80,24 +214,41 @@ export async function syncOrdersFromShopify(shopDomain, shopify_token, startDate
       }
     } catch { }
 
-    const phone = order.phone || order.billing_address?.phone || order.shipping_address?.phone || order.customer?.phone || '';
-    const firstName = order.billing_address?.first_name || order.customer?.first_name || order.shipping_address?.first_name || '';
-    const lastName = order.billing_address?.last_name || order.customer?.last_name || order.shipping_address?.last_name || '';
-    const city = order.billing_address?.city || order.shipping_address?.city || '';
-    const province = order.billing_address?.province || order.shipping_address?.province || '';
-    const zip = order.billing_address?.zip || order.shipping_address?.zip || '';
-    const country = order.billing_address?.country || order.shipping_address?.country || '';
+    const phone = order.phone || order.billingAddress?.phone || order.shippingAddress?.phone || order.customer?.phone || '';
+    const firstName = order.billingAddress?.firstName || order.customer?.firstName || order.shippingAddress?.firstName || '';
+    const lastName = order.billingAddress?.lastName || order.customer?.lastName || order.shippingAddress?.lastName || '';
+    const city = order.billingAddress?.city || order.shippingAddress?.city || '';
+    const province = order.billingAddress?.province || order.shippingAddress?.province || '';
+    const zip = order.billingAddress?.zip || order.shippingAddress?.zip || '';
+    const country = order.billingAddress?.country || order.shippingAddress?.country || '';
+
+    // Parse customer journey parameters
+    const journey = order.customerJourneySummary;
+    const firstVisitData = journey?.firstVisit;
+    const firstUtm = firstVisitData?.utmParameters;
+    const firstVisit = {
+      landingPage: firstVisitData?.landingPage || '',
+      referringSite: firstVisitData?.referrerUrl || '',
+      utmSource: firstUtm?.source || '',
+      utmMedium: firstUtm?.medium || '',
+      utmCampaign: firstUtm?.campaign || '',
+      utmContent: firstUtm?.content || '',
+      utmTerm: firstUtm?.term || ''
+    };
+
+    // Convert GraphQL format to compatible format for existing backend callers
+    order.id = numericId;
 
     return ShopifyOrder.findOneAndUpdate(
-      { storeUrl: shopDomain, orderId: order.id.toString() },
+      { storeUrl: shopDomain, orderId: numericId },
       {
         storeUrl: shopDomain,
-        orderId: order.id.toString(),
+        orderId: numericId,
         orderNumber: order.name,
-        createdAt: new Date(order.created_at),
-        totalPrice: parseFloat(order.total_price || 0),
-        currency: order.currency || 'PKR',
-        cancelledAt: order.cancelled_at ? new Date(order.cancelled_at) : null,
+        createdAt: new Date(order.createdAt),
+        totalPrice: parseFloat(order.totalPriceSet?.presentmentMoney?.amount || 0),
+        currency: order.totalPriceSet?.presentmentMoney?.currencyCode || 'PKR',
+        cancelledAt: order.cancelledAt ? new Date(order.cancelledAt) : null,
         email: order.email || '',
         customerInfo: {
           phone,
@@ -109,13 +260,16 @@ export async function syncOrdersFromShopify(shopDomain, shopify_token, startDate
           country
         },
         landingSite: landingSite,
-        referringSite: order.referring_site || '',
-        lineItems: order.line_items?.map(li => ({
-          productId: li.product_id?.toString() || '',
-          variantId: li.variant_id?.toString() || '',
-          quantity: li.quantity,
-          price: parseFloat(li.price || 0)
-        })) || [],
+        referringSite: order.customerJourneySummary?.lastVisit?.referrerUrl || '',
+        lineItems: order.lineItems?.edges?.map(edge => {
+          const li = edge.node;
+          return {
+            productId: li.product?.id ? li.product.id.split('/').pop() : '',
+            variantId: li.variant?.id ? li.variant.id.split('/').pop() : '',
+            quantity: li.quantity,
+            price: parseFloat(li.originalUnitPriceSet?.presentmentMoney?.amount || 0)
+          };
+        }) || [],
         attribution: {
           utmSource,
           utmMedium,
@@ -127,6 +281,11 @@ export async function syncOrdersFromShopify(shopDomain, shopify_token, startDate
           adSetId,
           campaignId,
           attributionMethod: adId ? 'fbclid_match' : (clickId ? 'fbclid_match' : (utmSource ? 'utm_match' : 'organic'))
+        },
+        customerJourney: {
+          daysToConversion: journey?.daysToConversion || 0,
+          momentsCount: journey?.momentsCount || 0,
+          firstVisit
         }
       },
       { upsert: true, new: true }

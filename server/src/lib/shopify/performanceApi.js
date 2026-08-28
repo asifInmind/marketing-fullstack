@@ -10,7 +10,6 @@ import { syncOrdersFromShopify } from './orderApi.js';
 import { findCoveringMarker } from './shopifyCore.js';
 import { fetchCompleteDashboard } from '../meta/index.js';
 
-// Helper function to match Meta Ad to a Product
 export function matchAdToProduct(ad, productsList) {
   // 1. Try URL Handle match (most accurate)
   const url = (ad.finalUrl || '').toLowerCase();
@@ -31,7 +30,8 @@ export function matchAdToProduct(ad, productsList) {
     }
   }
 
-  const adNameLower = ad.name.toLowerCase();
+  const adNameLower = (ad.name || '').toLowerCase();
+  const campaignNameLower = (ad.campaignName || '').toLowerCase();
 
   // 2. Try Variant SKU / top-level SKU match (very accurate)
   for (const product of productsList) {
@@ -47,11 +47,65 @@ export function matchAdToProduct(ad, productsList) {
     }
   }
 
-  // 3. Try Product Title match (fallback, length constraint to prevent generic false-positives)
+  // 3. Try exact keyword matching in Product Title/Handle (bidirectional)
   for (const product of productsList) {
-    const titleLower = product.title.toLowerCase();
-    if (titleLower.length > 5 && adNameLower.includes(titleLower)) {
-      return product;
+    const titleLower = (product.title || '').toLowerCase();
+    const handleLower = (product.handle || '').toLowerCase();
+    if (titleLower.length > 5) {
+      if (adNameLower.includes(titleLower) || titleLower.includes(adNameLower)) {
+        return product;
+      }
+      if (campaignNameLower.includes(titleLower) || titleLower.includes(campaignNameLower)) {
+        return product;
+      }
+    }
+    if (handleLower.length > 5) {
+      if (adNameLower.includes(handleLower) || handleLower.includes(adNameLower)) {
+        return product;
+      }
+      if (campaignNameLower.includes(handleLower) || handleLower.includes(campaignNameLower)) {
+        return product;
+      }
+    }
+  }
+
+  // 4. Advanced Token Overlap matching for generic names (e.g. "New Sales ad" inside campaign "massasge campain - wafel")
+  const stopWords = new Set([
+    'new', 'sales', 'ad', 'copy', 'pics', 'video', 'campaign', 'creative', 'mix', 'pic', 
+    'images', 'image', 'link', 'product', 'collections', 'products', 'men', 'mens', 
+    'status', 'active', 'paused', 'enabled', 'disabled', 'draft', 'adset', 'adgroup', 
+    'massasge', 'campain', 'chat', 'with', 'us', 'whatsapp', 'click', 'here', 'shop', 'now'
+  ]);
+
+  const tokenize = (str) => {
+    return str
+      .replace(/[\s\-_–]/g, ' ')
+      .toLowerCase()
+      .split(/\s+/)
+      .map(w => w.trim())
+      .filter(w => w.length > 2 && !stopWords.has(w));
+  };
+
+  const adTokens = new Set([...tokenize(adNameLower), ...tokenize(campaignNameLower)]);
+  if (adTokens.size > 0) {
+    let bestProduct = null;
+    let maxOverlap = 0;
+
+    for (const product of productsList) {
+      const prodTokens = [...tokenize(product.title || ''), ...tokenize(product.handle || '')];
+      let overlap = 0;
+      prodTokens.forEach(t => {
+        if (adTokens.has(t)) overlap++;
+      });
+
+      if (overlap > maxOverlap) {
+        maxOverlap = overlap;
+        bestProduct = product;
+      }
+    }
+
+    if (maxOverlap > 0) {
+      return bestProduct;
     }
   }
 
@@ -280,7 +334,9 @@ export async function calculateCatalogPerformance({ shopDomain, shopify_token, s
       campaignId: m.campaignId || '',
       adSetId: m.adSetId || '',
       campaignName: m.campaignName || 'N/A',
+      campaignStatus: m.campaignStatus || '',
       adGroupName: m.adSetName || 'N/A',
+      adSetStatus: m.adSetStatus || '',
       cost: insight.spend,
       clicks: insight.clicks,
       impressions: insight.impressions,
@@ -295,9 +351,17 @@ export async function calculateCatalogPerformance({ shopDomain, shopify_token, s
       } : null
     };
   }).filter(ad => {
-    const isActive = ad.status.toUpperCase() === 'ACTIVE';
+    const statusUpper = ad.status?.toUpperCase();
+    const isActive = statusUpper === 'ACTIVE' || statusUpper === 'ENABLED';
+    
+    const campStatusUpper = ad.campaignStatus?.toUpperCase();
+    const isCampaignActive = campStatusUpper === 'ACTIVE' || campStatusUpper === 'ENABLED';
+    
+    const adSetStatusUpper = ad.adSetStatus?.toUpperCase();
+    const isAdSetActive = adSetStatusUpper === 'ACTIVE' || adSetStatusUpper === 'ENABLED';
+    
     const hasSpend = ad.cost > 0;
-    if (!isActive || !hasSpend) return false;
+    if (!isActive || !isCampaignActive || !isAdSetActive || !hasSpend) return false;
 
     // Check if the active ad is frozen (has not spent any budget in the last 3 days relative to the latest sync date)
     if (ad.lastActiveDate) {
@@ -462,7 +526,7 @@ export async function calculateCatalogPerformance({ shopDomain, shopify_token, s
   const totalMetaEmails = new Set();
 
   dbOrders.forEach(order => {
-    const isCancelled = order.cancelledAt !== null;
+    const isCancelled = order.cancelledAt !== null && order.cancelledAt !== undefined;
     if (!isCancelled) {
       let isMetaAttributed = false;
 
@@ -513,6 +577,7 @@ export async function calculateCatalogPerformance({ shopDomain, shopify_token, s
               let orderAdId = (order.attribution?.adId || '').trim();
               let orderAdSetId = (order.attribution?.adSetId || '').trim();
               let orderCampaignId = (order.attribution?.campaignId || '').trim();
+              let orderClickId = (order.attribution?.clickId || '').trim();
 
               if (order.landingSite) {
                 try {
@@ -523,6 +588,7 @@ export async function calculateCatalogPerformance({ shopDomain, shopify_token, s
                   if (!orderAdId) orderAdId = url.searchParams.get('ad_id') || url.searchParams.get('fb_ad_id') || '';
                   if (!orderAdSetId) orderAdSetId = url.searchParams.get('adset_id') || url.searchParams.get('fb_adset_id') || '';
                   if (!orderCampaignId) orderCampaignId = url.searchParams.get('campaign_id') || url.searchParams.get('fb_campaign_id') || '';
+                  if (!orderClickId) orderClickId = url.searchParams.get('fbclid') || '';
                 } catch { }
               }
 
@@ -567,7 +633,8 @@ export async function calculateCatalogPerformance({ shopDomain, shopify_token, s
                   return campaignMatch || contentMatch || adSetMatch;
                 });
               } else {
-                isSpecificallyAttributed = true;
+                // Without any specific UTM parameters or IDs, we cannot verify it came from active ads
+                isSpecificallyAttributed = false;
               }
             }
           }
@@ -648,6 +715,16 @@ export async function calculateCatalogPerformance({ shopDomain, shopify_token, s
         const adId = (ad.id || '').trim();
         const adSetId = (ad.adSetId || '').trim();
         const adCampaignId = (ad.campaignId || '').trim();
+
+        // Guard clauses: If the order explicitly specifies a different ad ID, ad set ID, or campaign ID, skip matching
+        const orderAId = orderAdId || (order.utmContent && /^\d+$/.test(order.utmContent) ? order.utmContent : null);
+        if (orderAId && orderAId !== adId) return false;
+
+        const orderAsId = orderAdSetId || (order.utmTerm && /^\d+$/.test(order.utmTerm) ? order.utmTerm : null);
+        if (orderAsId && orderAsId !== adSetId) return false;
+
+        const orderCampId = orderCampaignId || (order.utmCampaign && /^\d+$/.test(order.utmCampaign) ? order.utmCampaign : null);
+        if (orderCampId && orderCampId !== adCampaignId) return false;
 
         // 1. Direct ID matches (extremely accurate)
         if (orderAdId && adId === orderAdId) return true;
@@ -782,7 +859,7 @@ export async function calculateCatalogPerformance({ shopDomain, shopify_token, s
   };
 
   validOrders.forEach(o => {
-    const channel = getOrderChannel(o.attribution?.utmSource || '', o.referringSite || '');
+    const channel = getOrderChannel(o.attribution?.utmSource || '', o.referringSite || '', o.attribution?.clickId || '');
     channels[channel].orders++;
     channels[channel].revenue += (o.totalPrice || 0);
   });
@@ -825,11 +902,12 @@ export async function calculateCatalogPerformance({ shopDomain, shopify_token, s
 }
 
 // Helper to classify order traffic source channels
-function getOrderChannel(utmSource, referringSite) {
+export function getOrderChannel(utmSource, referringSite, clickId = '') {
   const src = (utmSource || '').toLowerCase().trim();
   const ref = (referringSite || '').toLowerCase().trim();
+  const cid = (clickId || '').toLowerCase().trim();
 
-  if (['facebook', 'instagram', 'meta', 'fb', 'ig'].some(k => src.includes(k) || ref.includes(k))) {
+  if (cid || ['facebook', 'instagram', 'meta', 'fb', 'ig'].some(k => src.includes(k) || ref.includes(k))) {
     return 'Meta';
   }
   if (['google', 'youtube', 'gads', 'google_ads'].some(k => src.includes(k) || ref.includes(k))) {
