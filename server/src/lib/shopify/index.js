@@ -5,3 +5,4 @@ export { calculateCatalogPerformance, getOrderChannel } from './performanceApi.j
 export { calculateCampaignPerformance } from './calculateCampaignPerformance.js';
 export { calculateAdSetPerformance } from './calculateAdSetPerformance.js';
 export { calculateAdPerformance } from './calculateAdPerformance.js';
+export { parseCustomerJourneySummary } from './customerJourneySummaryParser.js';

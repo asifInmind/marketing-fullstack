@@ -19,7 +19,9 @@ import {
   Chip,
   CircularProgress,
   Alert,
-  AlertTitle
+  AlertTitle,
+  Pagination,
+  Stack
 } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
 import CalendarTodayIcon from '@mui/icons-material/CalendarToday';
@@ -81,6 +83,15 @@ export function MetaAdSetAuditDrawer({
     }
   }, [open, adSetId, startDate, endDate, currencyCode]);
 
+  const [dailyPage, setDailyPage] = useState(1);
+  const [ordersPage, setOrdersPage] = useState(1);
+  const PAGE_SIZE = 100;
+
+  useEffect(() => {
+    setDailyPage(1);
+    setOrdersPage(1);
+  }, [adSetId, startDate, endDate]);
+
   const formatCurrency = (amount) => {
     try {
       return new Intl.NumberFormat('en-US', {
@@ -94,6 +105,14 @@ export function MetaAdSetAuditDrawer({
 
   const adSetName = data?.adSetName || initialAdSetName || 'N/A';
   const adSetStatus = data?.adSetStatus || 'UNKNOWN';
+
+  const dailyTrends = data?.dailySpendBreakdown || [];
+  const totalDailyPages = Math.ceil(dailyTrends.length / PAGE_SIZE);
+  const paginatedDailyTrends = dailyTrends.slice((dailyPage - 1) * PAGE_SIZE, dailyPage * PAGE_SIZE);
+
+  const matchedOrders = data?.matchedOrders || [];
+  const totalOrdersPages = Math.ceil(matchedOrders.length / PAGE_SIZE);
+  const paginatedOrders = matchedOrders.slice((ordersPage - 1) * PAGE_SIZE, ordersPage * PAGE_SIZE);
 
   return (
     <Drawer
@@ -112,7 +131,7 @@ export function MetaAdSetAuditDrawer({
           </Typography>
           <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5, mt: 1, alignItems: 'center' }}>
             <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600 }}>
-              Ad Set ID: {adSetId}
+              AdSet ID: {adSetId}
             </Typography>
             <Typography variant="caption" sx={{ color: 'text.secondary' }}>•</Typography>
             <Chip
@@ -230,11 +249,18 @@ export function MetaAdSetAuditDrawer({
 
           {/* Daily Trend Breakdown */}
           <Box>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}>
-              <BarChartIcon sx={{ color: 'primary.main' }} />
-              <Typography variant="subtitle2" sx={{ fontWeight: 800, color: 'slate.900' }}>
-                Daily Trend Breakdown
-              </Typography>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1.5 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <BarChartIcon sx={{ color: 'primary.main' }} />
+                <Typography variant="subtitle2" sx={{ fontWeight: 800, color: 'slate.900' }}>
+                  Daily Trend Breakdown ({dailyTrends.length})
+                </Typography>
+              </Box>
+              {dailyTrends.length > PAGE_SIZE && (
+                <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600 }}>
+                  Showing {(dailyPage - 1) * PAGE_SIZE + 1}–{Math.min(dailyPage * PAGE_SIZE, dailyTrends.length)} of {dailyTrends.length}
+                </Typography>
+              )}
             </Box>
             <TableContainer component={Paper} sx={{ borderRadius: 1.5, border: '1px solid #E2E8F0', boxShadow: 'none' }}>
               <Table size="small">
@@ -249,7 +275,7 @@ export function MetaAdSetAuditDrawer({
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {data.dailySpendBreakdown?.map((row) => (
+                  {paginatedDailyTrends.map((row) => (
                     <TableRow key={row.date} sx={{ '&:last-child td, &:last-child th': { border: 0 } }}>
                       <TableCell sx={{ fontWeight: 600 }}>{row.date}</TableCell>
                       <TableCell align="right">{formatCurrency(row.spend)}</TableCell>
@@ -259,7 +285,7 @@ export function MetaAdSetAuditDrawer({
                       <TableCell align="right" sx={{ fontWeight: 600, color: 'success.main' }}>{formatCurrency(row.shopifyRevenue)}</TableCell>
                     </TableRow>
                   ))}
-                  {(!data.dailySpendBreakdown || data.dailySpendBreakdown.length === 0) && (
+                  {dailyTrends.length === 0 && (
                     <TableRow>
                       <TableCell colSpan={6} align="center" sx={{ py: 3, color: 'text.secondary', fontStyle: 'italic' }}>
                         No daily trends found for this date range.
@@ -269,15 +295,36 @@ export function MetaAdSetAuditDrawer({
                 </TableBody>
               </Table>
             </TableContainer>
+
+            {/* Daily Trends Pagination */}
+            {totalDailyPages > 1 && (
+              <Box sx={{ mt: 2, display: 'flex', justifyContent: 'center' }}>
+                <Pagination
+                  count={totalDailyPages}
+                  page={dailyPage}
+                  onChange={(e, v) => setDailyPage(v)}
+                  color="primary"
+                  size="small"
+                  shape="rounded"
+                />
+              </Box>
+            )}
           </Box>
 
           {/* Matched Orders List */}
           <Box>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}>
-              <ShoppingBagIcon sx={{ color: 'success.main' }} />
-              <Typography variant="subtitle2" sx={{ fontWeight: 800, color: 'slate.900' }}>
-                Attributed Shopify Orders ({data.matchedOrders?.length || 0})
-              </Typography>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1.5 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <ShoppingBagIcon sx={{ color: 'success.main' }} />
+                <Typography variant="subtitle2" sx={{ fontWeight: 800, color: 'slate.900' }}>
+                  Attributed Shopify Orders ({matchedOrders.length})
+                </Typography>
+              </Box>
+              {matchedOrders.length > PAGE_SIZE && (
+                <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600 }}>
+                  Showing {(ordersPage - 1) * PAGE_SIZE + 1}–{Math.min(ordersPage * PAGE_SIZE, matchedOrders.length)} of {matchedOrders.length}
+                </Typography>
+              )}
             </Box>
             <TableContainer component={Paper} sx={{ borderRadius: 1.5, border: '1px solid #E2E8F0', boxShadow: 'none' }}>
               <Table size="small">
@@ -291,7 +338,7 @@ export function MetaAdSetAuditDrawer({
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {data.matchedOrders?.map((order) => (
+                  {paginatedOrders.map((order) => (
                     <TableRow key={order.orderId} sx={{ '&:last-child td, &:last-child th': { border: 0 } }}>
                       <TableCell sx={{ fontWeight: 700, color: 'primary.main' }}>
                         #{order.orderNumber}
@@ -356,7 +403,7 @@ export function MetaAdSetAuditDrawer({
                       </TableCell>
                     </TableRow>
                   ))}
-                  {(!data.matchedOrders || data.matchedOrders.length === 0) && (
+                  {matchedOrders.length === 0 && (
                     <TableRow>
                       <TableCell colSpan={5} align="center" sx={{ py: 3, color: 'text.secondary', fontStyle: 'italic' }}>
                         No matched orders found for this ad set in this date range.
@@ -366,6 +413,20 @@ export function MetaAdSetAuditDrawer({
                 </TableBody>
               </Table>
             </TableContainer>
+
+            {/* Orders Pagination */}
+            {totalOrdersPages > 1 && (
+              <Box sx={{ mt: 2, display: 'flex', justifyContent: 'center' }}>
+                <Pagination
+                  count={totalOrdersPages}
+                  page={ordersPage}
+                  onChange={(e, v) => setOrdersPage(v)}
+                  color="primary"
+                  size="small"
+                  shape="rounded"
+                />
+              </Box>
+            )}
           </Box>
 
         </Box>

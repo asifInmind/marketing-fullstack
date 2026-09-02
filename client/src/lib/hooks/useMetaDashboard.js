@@ -75,178 +75,118 @@ export function useMetaDashboard(accessToken, accountId) {
   }, [data]);
   
   // Fetch dashboard data
-  const fetchDashboard = useCallback(async (forceRefresh = false) => {
+  const fetchDashboard = useCallback(async (forceRefresh = false, overrideRange = null) => {
+    const activeRange = overrideRange || dateRange;
+    const activeToken = accessToken;
+    const activeAccountId = accountId;
+
+    if (!activeToken || !activeAccountId) return;
+
     setLoading(true);
     setLoadingInsights(true);
     setError(null);
     
     const baseParams = new URLSearchParams({
-      account_id: configRef.current.accountId,
-      date_preset: configRef.current.dateRange?.preset || 'last_30d',
-      page_size: String(configRef.current.pageSize || 10),
+      account_id: activeAccountId,
+      date_preset: activeRange?.preset || 'last_30d',
+      page_size: '150',
     });
 
-    const storedShopUrl = localStorage.getItem('shopifyStoreUrl');
+    const storedShopUrl = typeof window !== 'undefined' ? localStorage.getItem('shopifyStoreUrl') : '';
     if (storedShopUrl) {
       baseParams.append('shopify_url', storedShopUrl);
     }
 
-    if (configRef.current.dateRange?.since) {
-      baseParams.append('since', configRef.current.dateRange.since);
+    if (activeRange?.since) {
+      baseParams.append('since', activeRange.since);
     }
-    if (configRef.current.dateRange?.until) {
-      baseParams.append('until', configRef.current.dateRange.until);
+    if (activeRange?.until) {
+      baseParams.append('until', activeRange.until);
     }
 
     try {
-      console.log('📡 Step 1: Fetching dashboard structure (forceRefresh:', forceRefresh, ')...');
-      const structParams = new URLSearchParams(baseParams);
-      structParams.append('type', 'structure');
+      console.log('📡 Fetching complete dashboard (preset:', activeRange?.preset, 'forceRefresh:', forceRefresh, ')...');
+      const params = new URLSearchParams(baseParams);
       if (forceRefresh) {
-        structParams.append('refresh', 'true');
+        params.append('refresh', 'true');
       }
 
-      const structResponse = await fetch(`${BACKEND_URL}/api/meta?${structParams.toString()}`, {
+      const response = await fetch(`${BACKEND_URL}/api/meta?${params.toString()}`, {
         headers: {
-          'Authorization': `Bearer ${configRef.current.accessToken}`
+          'Authorization': `Bearer ${activeToken}`
         }
       });
 
-      if (!structResponse.ok) {
-        if (structResponse.status === 429) {
+      if (!response.ok) {
+        if (response.status === 429) {
           throw new Error('You are requesting too much data. Please reduce your date range or wait a moment and try again.');
         }
-        const text = await structResponse.text();
+        const text = await response.text();
         if (text.toLowerCase().includes('rate limit') || text.toLowerCase().includes('too many requests')) {
           throw new Error('You are requesting too much data. Please reduce your date range or wait a moment and try again.');
         }
         throw new Error('Internal Server Error. Please reduce your date range or try again in a few moments.');
       }
 
-      let structResult;
+      let result;
       try {
-        structResult = await structResponse.json();
+        result = await response.json();
       } catch (e) {
         throw new Error('Internal Server Error. Please reduce your date range or try again in a few moments.');
       }
 
-      if (!structResult.success) {
-        throw new Error(structResult.error || 'Failed to fetch dashboard structure');
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to fetch dashboard data');
       }
 
-      console.log('✅ Structure fetched:', {
-        campaigns: structResult.data.campaigns?.length || 0,
-        adSets: structResult.data.adSets?.length || 0,
-        ads: structResult.data.ads?.length || 0,
+      console.log('✅ Dashboard fetched successfully:', {
+        campaigns: result.data.campaigns?.length || 0,
+        adSets: result.data.adSets?.length || 0,
+        ads: result.data.ads?.length || 0,
+        totalSpend: result.data.summary?.totalSpend || 0,
+        totalShopifyRevenue: result.data.summary?.totalShopifyRevenue || 0
       });
 
-      setData(structResult.data);
-      setLoading(false); // Stop structure loading spinner, show UI
+      setData(result.data);
+      setLoading(false);
+      setLoadingInsights(false);
 
-      // Step 2: Fetch insights sequentially
-      console.log('📡 Step 2: Fetching dashboard insights (forceRefresh:', forceRefresh, ')...');
-      const insightsParams = new URLSearchParams(baseParams);
-      insightsParams.append('type', 'insights');
-      if (forceRefresh) {
-        insightsParams.append('refresh', 'true');
-      }
-
-      try {
-        const insightsRes = await fetch(`${BACKEND_URL}/api/meta?${insightsParams.toString()}`, {
-          headers: {
-            'Authorization': `Bearer ${configRef.current.accessToken}`
-          }
-        });
-
-        if (!insightsRes.ok) {
-          if (insightsRes.status === 429) {
-            setError('You are requesting too much data. Please reduce your date range or wait a moment and try again.');
-            return;
-          }
-          const text = await insightsRes.text();
-          if (text.toLowerCase().includes('rate limit') || text.toLowerCase().includes('too many requests')) {
-            setError('You are requesting too much data. Please reduce your date range or wait a moment and try again.');
-            return;
-          }
-          setError('Failed to load insights. Please reduce your date range or try again in a few moments.');
-          return;
-        }
-
-        let insightsResult;
-        try {
-          insightsResult = await insightsRes.json();
-        } catch (e) {
-          setError('Failed to parse insights. Please try again in a few moments.');
-          return;
-        }
-        if (insightsResult.success) {
-          console.log('✅ Insights fetched successfully');
-          setData(prev => {
-            if (!prev) return null;
-            return {
-              ...prev,
-              campaignInsights: insightsResult.data.campaignInsights || {},
-              adSetInsights: insightsResult.data.adSetInsights || {},
-              adInsights: insightsResult.data.adInsights || {},
-              summary: {
-                ...prev.summary,
-                ...insightsResult.data.summary,
+      // Load creatives in background if missing
+      if (result.data.ads && result.data.ads.length > 0) {
+        const adsWithoutCreatives = result.data.ads.filter(ad => !ad.creative?.id);
+        if (adsWithoutCreatives.length > 0) {
+          setLoadingCreatives(true);
+          try {
+            const creativesRes = await fetch(`${BACKEND_URL}/api/meta`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
               },
-              loading: {
-                ...prev.loading,
-                insights: false
-              }
-            };
-          });
-        } else {
-          if (insightsResult.code === 'TOKEN_EXPIRED') {
-            console.warn('⚠️ Meta token expired - insights unavailable. User must reconnect.');
-            setTokenExpired(true);
-            setError('Meta access token has expired. Please reconnect your Meta account.');
-          } else {
-            console.warn('⚠️ Failed to fetch insights:', insightsResult.error);
-          }
-        }
-      } catch (err) {
-        console.warn('⚠️ Insights network error:', err);
-      } finally {
-        setLoadingInsights(false);
-      }
-
-      // Step 3: Fetch creatives sequentially (enables instant Shopify matching)
-      if (structResult.data.ads && structResult.data.ads.length > 0) {
-        setLoadingCreatives(true);
-        try {
-          const creativesRes = await fetch(`${BACKEND_URL}/api/meta`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              accessToken: configRef.current.accessToken,
-              accountId: configRef.current.accountId,
-              type: 'creatives',
-              ads: structResult.data.ads,
-            }),
-          });
-          const creativesResult = await creativesRes.json();
-          if (creativesResult.success) {
-            console.log('✅ Creatives fetched successfully');
-            setData(prev => {
-              if (!prev) return null;
-              return {
-                ...prev,
-                creatives: {
-                  ...prev.creatives,
-                  ...creativesResult.data,
-                }
-              };
+              body: JSON.stringify({
+                accessToken: activeToken,
+                accountId: activeAccountId,
+                type: 'creatives',
+                ads: adsWithoutCreatives,
+              }),
             });
+            const creativesResult = await creativesRes.json();
+            if (creativesResult.success) {
+              setData(prev => {
+                if (!prev) return null;
+                return {
+                  ...prev,
+                  creatives: {
+                    ...prev.creatives,
+                    ...creativesResult.data,
+                  }
+                };
+              });
+            }
+          } catch (err) {
+            console.warn('⚠️ Creatives network error:', err);
+          } finally {
+            setLoadingCreatives(false);
           }
-        } catch (err) {
-          console.warn('⚠️ Creatives network error:', err);
-        } finally {
-          setLoadingCreatives(false);
         }
       }
 
@@ -423,19 +363,13 @@ export function useMetaDashboard(accessToken, accountId) {
   // Set date range
   const handleSetDateRange = useCallback((range) => {
     setDateRange(range);
-  }, []);
-  
-  // Initial fetch
-  useEffect(() => {
-    fetchDashboard();
+    fetchDashboard(false, range);
   }, [fetchDashboard]);
   
-  // Refresh when date range changes
+  // Initial fetch on mount or when token/accountId changes
   useEffect(() => {
-    if (!loading) {
-      fetchDashboard();
-    }
-  }, [dateRange]);
+    fetchDashboard(false, dateRange);
+  }, [accessToken, accountId]);
   
   const hasMore = useMemo(() => ({
     campaigns: data?.pagination?.campaigns?.hasMore || false,

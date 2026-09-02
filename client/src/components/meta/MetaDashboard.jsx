@@ -752,36 +752,6 @@ export function MetaDashboard({ accessToken, accountId }) {
           </Alert>
         )}
 
-        {/* Wasted Budget Alerts Banner */}
-        {wastedBudgetAlerts && wastedBudgetAlerts.length > 0 && (
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, mb: 1 }}>
-            {wastedBudgetAlerts.map(alert => (
-              <Alert
-                key={alert.adId}
-                severity="warning"
-                sx={{ borderRadius: 2 }}
-                action={
-                  alert.adUrl && alert.adUrl !== '#' && (
-                    <Button
-                      color="inherit"
-                      size="small"
-                      href={alert.adUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      sx={{ fontWeight: 600 }}
-                    >
-                      View Ad
-                    </Button>
-                  )
-                }
-              >
-                <AlertTitle sx={{ fontWeight: 700 }}>Wasted Ad Budget Alert</AlertTitle>
-                Active Ad <strong>{alert.adName}</strong> (Spend: {currencyCode} {alert.spend.toFixed(2)}) is driving traffic to <strong>{alert.productTitle}</strong> (SKU: {alert.sku}) which is <strong>Out of Stock</strong>!
-              </Alert>
-            ))}
-          </Box>
-        )}
-
         {showAdSetDetail && selectedAdSet ? (
           <MetaAdSetDetail
             adSet={selectedAdSet}

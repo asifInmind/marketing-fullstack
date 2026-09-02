@@ -188,13 +188,27 @@ function compileMetaDashboardResponse(dbMeta, dbInsights, dbOrders = []) {
     }
   });
  
+  // Resolve campaign status: If campaignStatus is empty or missing, check child ads/adsets
+  Object.values(campaignMap).forEach(camp => {
+    if (!camp.status || camp.status === 'UNKNOWN') {
+      const hasActiveAd = adsList.some(ad => ad.campaignId === camp.id && (ad.status?.toUpperCase() === 'ACTIVE' || ad.status?.toUpperCase() === 'ENABLED'));
+      const hasActiveAdSet = Object.values(adSetMap).some(as => as.campaignId === camp.id && (as.status?.toUpperCase() === 'ACTIVE' || as.status?.toUpperCase() === 'ENABLED'));
+      if (hasActiveAd || hasActiveAdSet) {
+        camp.status = 'ACTIVE';
+      }
+    }
+  });
+
   // Back-fill campaign and adset names/status across objects to resolve dirty database caches
   adsList.forEach(ad => {
     if (!ad.campaignName && ad.campaignId && campaignMap[ad.campaignId]?.name) {
       ad.campaignName = campaignMap[ad.campaignId].name;
     }
-    if (!ad.campaignStatus && ad.campaignId && campaignMap[ad.campaignId]?.status) {
+    if ((!ad.campaignStatus || ad.campaignStatus === 'UNKNOWN') && ad.campaignId && campaignMap[ad.campaignId]?.status) {
       ad.campaignStatus = campaignMap[ad.campaignId].status;
+    }
+    if (!ad.campaignStatus && (ad.status?.toUpperCase() === 'ACTIVE' || ad.status?.toUpperCase() === 'ENABLED')) {
+      ad.campaignStatus = 'ACTIVE';
     }
     if (!ad.adGroupName && ad.adSetId && adSetMap[ad.adSetId]?.name) {
       ad.adGroupName = adSetMap[ad.adSetId].name;
@@ -205,8 +219,11 @@ function compileMetaDashboardResponse(dbMeta, dbInsights, dbOrders = []) {
     if (!adSet.campaignName && adSet.campaignId && campaignMap[adSet.campaignId]?.name) {
       adSet.campaignName = campaignMap[adSet.campaignId].name;
     }
-    if (!adSet.campaignStatus && adSet.campaignId && campaignMap[adSet.campaignId]?.status) {
+    if ((!adSet.campaignStatus || adSet.campaignStatus === 'UNKNOWN') && adSet.campaignId && campaignMap[adSet.campaignId]?.status) {
       adSet.campaignStatus = campaignMap[adSet.campaignId].status;
+    }
+    if (!adSet.campaignStatus && (adSet.status?.toUpperCase() === 'ACTIVE' || adSet.status?.toUpperCase() === 'ENABLED')) {
+      adSet.campaignStatus = 'ACTIVE';
     }
   });
 
@@ -612,13 +629,13 @@ router.get('/', async (req, res) => {
             channel: 'meta',
             campaignId: campaignId,
             campaignName: ad.campaign?.name || campaign.name || ad.campaign_name || '',
-            campaignStatus: campaign.status || ad.campaign_status || '',
+            campaignStatus: ad.campaign?.status || campaign.status || ad.campaign_status || '',
             campaignObjective: campaign.objective || '',
             campaignStartDate: campaign.start_time || '',
             campaignEndDate: campaign.stop_time || '',
             adSetId: adSetId,
             adSetName: ad.adset?.name || adSet.name || ad.adset_name || '',
-            adSetStatus: adSet.status || ad.adset_status || '',
+            adSetStatus: ad.adset?.status || adSet.status || ad.adset_status || '',
             adSetTargeting: adSet.targeting ? JSON.stringify(adSet.targeting) : '',
             adSetStartDate: adSet.start_time || '',
             adSetEndDate: adSet.end_time || '',
@@ -653,6 +670,15 @@ router.get('/', async (req, res) => {
               { upsert: true, new: true }
             )
           );
+
+          if (updateObj.campaignStatus && updateObj.campaignId) {
+            cachePromises.push(
+              AdMetadata.updateMany(
+                { campaignId: updateObj.campaignId, $or: [{ campaignStatus: "" }, { campaignStatus: { $exists: false } }] },
+                { $set: { campaignStatus: updateObj.campaignStatus } }
+              )
+            );
+          }
         });
       }
 

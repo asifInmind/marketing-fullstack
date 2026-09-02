@@ -39,7 +39,7 @@ export async function enrichAdSetsWithCampaignNames(adSets, config) {
           '',
           {
             ids: chunk.join(','),
-            fields: 'name'
+            fields: 'name,status,effective_status'
           },
           config
         )
@@ -47,8 +47,12 @@ export async function enrichAdSetsWithCampaignNames(adSets, config) {
 
       if (result) {
         Object.entries(result).forEach(([id, campaignObj]) => {
-          if (campaignObj && campaignObj.name) {
-            campaignMap[id] = campaignObj.name;
+          if (campaignObj) {
+            campaignMap[id] = {
+              name: campaignObj.name || '',
+              status: campaignObj.status || '',
+              effective_status: campaignObj.effective_status || ''
+            };
           }
         });
       }
@@ -65,7 +69,8 @@ export async function enrichAdSetsWithCampaignNames(adSets, config) {
 
   return adSets.map(adSet => ({
     ...adSet,
-    campaign_name: campaignMap[adSet.campaign_id] || 'Unknown Campaign'
+    campaign_name: campaignMap[adSet.campaign_id]?.name || 'Unknown Campaign',
+    campaign_status: campaignMap[adSet.campaign_id]?.status || ''
   }));
 }
 

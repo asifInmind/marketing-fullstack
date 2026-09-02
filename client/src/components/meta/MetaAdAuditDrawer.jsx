@@ -43,8 +43,9 @@ export function MetaAdAuditDrawer({
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [page, setPage] = useState(1);
-  const ordersPerPage = 10;
+  const [dailyPage, setDailyPage] = useState(1);
+  const [ordersPage, setOrdersPage] = useState(1);
+  const PAGE_SIZE = 100;
 
   useEffect(() => {
     if (open && adId) {
@@ -86,8 +87,9 @@ export function MetaAdAuditDrawer({
   }, [open, adId, startDate, endDate, currencyCode]);
 
   useEffect(() => {
-    setPage(1);
-  }, [adId]);
+    setDailyPage(1);
+    setOrdersPage(1);
+  }, [adId, startDate, endDate]);
 
   const formatCurrency = (amount) => {
     try {
@@ -103,14 +105,14 @@ export function MetaAdAuditDrawer({
   const adName = data?.adName || initialAdName || 'N/A';
   const adStatus = data?.adStatus || 'UNKNOWN';
 
+  const dailyTrends = data?.dailySpendBreakdown || [];
+  const totalDailyPages = Math.ceil(dailyTrends.length / PAGE_SIZE);
+  const paginatedDailyTrends = dailyTrends.slice((dailyPage - 1) * PAGE_SIZE, dailyPage * PAGE_SIZE);
+
   // Pagination for orders table
   const matchedOrders = data?.matchedOrders || [];
-  const totalPages = Math.ceil(matchedOrders.length / ordersPerPage);
-  const paginatedOrders = matchedOrders.slice((page - 1) * ordersPerPage, page * ordersPerPage);
-
-  const handlePageChange = (event, value) => {
-    setPage(value);
-  };
+  const totalOrdersPages = Math.ceil(matchedOrders.length / PAGE_SIZE);
+  const paginatedOrders = matchedOrders.slice((ordersPage - 1) * PAGE_SIZE, ordersPage * PAGE_SIZE);
 
   return (
     <Drawer
@@ -224,16 +226,23 @@ export function MetaAdAuditDrawer({
             ))}
           </Grid>
 
-          {/* Daily Performance Trend */}
+          {/* Daily Trend Breakdown */}
           <Box>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-              <BarChartIcon sx={{ color: 'primary.main' }} />
-              <Typography variant="subtitle2" sx={{ fontWeight: 800, color: 'slate.900' }}>
-                Daily Trend: Ad Spend vs. Attributed Sales
-              </Typography>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1.5 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <BarChartIcon sx={{ color: 'primary.main' }} />
+                <Typography variant="subtitle2" sx={{ fontWeight: 800, color: 'slate.900' }}>
+                  Daily Trend Breakdown ({dailyTrends.length})
+                </Typography>
+              </Box>
+              {dailyTrends.length > PAGE_SIZE && (
+                <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600 }}>
+                  Showing {(dailyPage - 1) * PAGE_SIZE + 1}–{Math.min(dailyPage * PAGE_SIZE, dailyTrends.length)} of {dailyTrends.length}
+                </Typography>
+              )}
             </Box>
-            <TableContainer component={Paper} sx={{ borderRadius: 1.5, border: '1px solid #E2E8F0', boxShadow: 'none', maxHeight: 300 }}>
-              <Table size="small" stickyHeader>
+            <TableContainer component={Paper} sx={{ borderRadius: 1.5, border: '1px solid #E2E8F0', boxShadow: 'none' }}>
+              <Table size="small">
                 <TableHead sx={{ '& th': { bgcolor: '#F8FAFC', fontWeight: 700 } }}>
                   <TableRow>
                     <TableCell>Date</TableCell>
@@ -245,7 +254,7 @@ export function MetaAdAuditDrawer({
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {data.dailySpendBreakdown?.map((day) => {
+                  {paginatedDailyTrends.map((day) => {
                     const metaROAS = day.spend > 0 ? (day.metaRevenue || 0) / day.spend : 0;
                     const shopifyROAS = day.spend > 0 ? (day.shopifyRevenue || 0) / day.spend : 0;
                     return (
@@ -267,7 +276,7 @@ export function MetaAdAuditDrawer({
                       </TableRow>
                     );
                   })}
-                  {(!data.dailySpendBreakdown || data.dailySpendBreakdown.length === 0) && (
+                  {dailyTrends.length === 0 && (
                     <TableRow>
                       <TableCell colSpan={6} align="center" sx={{ py: 3, color: 'text.secondary', fontStyle: 'italic' }}>
                         No daily insight details
@@ -277,15 +286,36 @@ export function MetaAdAuditDrawer({
                 </TableBody>
               </Table>
             </TableContainer>
+
+            {/* Daily Trends Pagination */}
+            {totalDailyPages > 1 && (
+              <Box sx={{ mt: 2, display: 'flex', justifyContent: 'center' }}>
+                <Pagination
+                  count={totalDailyPages}
+                  page={dailyPage}
+                  onChange={(e, v) => setDailyPage(v)}
+                  color="primary"
+                  size="small"
+                  shape="rounded"
+                />
+              </Box>
+            )}
           </Box>
 
           {/* Attributed Orders */}
           <Box>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-              <ShoppingBagIcon sx={{ color: 'primary.main' }} />
-              <Typography variant="subtitle2" sx={{ fontWeight: 800, color: 'slate.900' }}>
-                Attributed Shopify Orders List (Showing {paginatedOrders.length} of {matchedOrders.length})
-              </Typography>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1.5 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <ShoppingBagIcon sx={{ color: 'primary.main' }} />
+                <Typography variant="subtitle2" sx={{ fontWeight: 800, color: 'slate.900' }}>
+                  Attributed Shopify Orders ({matchedOrders.length})
+                </Typography>
+              </Box>
+              {matchedOrders.length > PAGE_SIZE && (
+                <Typography variant="caption" sx={{ color: 'text.secondary', fontWeight: 600 }}>
+                  Showing {(ordersPage - 1) * PAGE_SIZE + 1}–{Math.min(ordersPage * PAGE_SIZE, matchedOrders.length)} of {matchedOrders.length}
+                </Typography>
+              )}
             </Box>
 
             <TableContainer component={Paper} sx={{ borderRadius: 1.5, border: '1px solid #E2E8F0', boxShadow: 'none' }}>
@@ -402,15 +432,15 @@ export function MetaAdAuditDrawer({
               </Table>
             </TableContainer>
 
-            {/* Pagination */}
-            {totalPages > 1 && (
-              <Box sx={{ mt: 3, display: 'flex', justifyContent: 'center' }}>
+            {/* Orders Pagination */}
+            {totalOrdersPages > 1 && (
+              <Box sx={{ mt: 2, display: 'flex', justifyContent: 'center' }}>
                 <Pagination
-                  count={totalPages}
-                  page={page}
-                  onChange={handlePageChange}
+                  count={totalOrdersPages}
+                  page={ordersPage}
+                  onChange={(e, v) => setOrdersPage(v)}
                   color="primary"
-                  size="medium"
+                  size="small"
                   shape="rounded"
                 />
               </Box>
