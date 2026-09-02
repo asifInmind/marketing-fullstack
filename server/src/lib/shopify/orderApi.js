@@ -1,6 +1,7 @@
 import ShopifyOrder from '../../models/ShopifyOrder.js';
 import CacheMarker from '../../models/CacheMarker.js';
 import Merchant from '../../models/Merchant.js';
+import { SHOPIFY_API_VERSION } from './shopifyCore.js';
 
 // Helper to make fetch requests with exponential backoff on 429 rate limit
 async function fetchWithRetry(url, options, retries = 3, backoff = 1000) {
@@ -122,7 +123,7 @@ const ORDERS_QUERY = `
 
 export async function syncOrdersFromShopify(shopDomain, shopify_token, startDate, endDate) {
   const allOrders = [];
-  const graphqlUrl = `https://${shopDomain}/admin/api/2024-01/graphql.json`;
+  const graphqlUrl = `https://${shopDomain}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`;
   
   // Construct search query
   const queryParts = [];
@@ -236,6 +237,41 @@ export async function syncOrdersFromShopify(shopDomain, shopify_token, startDate
       utmTerm: firstUtm?.term || ''
     };
 
+    const lastVisitData = journey?.lastVisit;
+    const lastUtm = lastVisitData?.utmParameters;
+    const lastVisit = {
+      landingPage: lastVisitData?.landingPage || '',
+      referringSite: lastVisitData?.referrerUrl || '',
+      utmSource: lastUtm?.source || '',
+      utmMedium: lastUtm?.medium || '',
+      utmCampaign: lastUtm?.campaign || '',
+      utmContent: lastUtm?.content || '',
+      utmTerm: lastUtm?.term || ''
+    };
+
+    // Tier 2 Fallback: If parameters are missing from landingSite, check lastVisit then firstVisit
+    const journeyUtm = (lastUtm?.campaign || lastUtm?.source || lastUtm?.content || lastUtm?.term) ? lastUtm : firstUtm;
+    const journeySource = lastVisitData?.referrerUrl || firstVisitData?.referrerUrl || '';
+
+    if (!utmSource) utmSource = journeyUtm?.source || journeySource || '';
+    if (!utmMedium) utmMedium = journeyUtm?.medium || '';
+    if (!utmCampaign) utmCampaign = journeyUtm?.campaign || '';
+    if (!utmContent) utmContent = journeyUtm?.content || '';
+    if (!utmTerm) utmTerm = journeyUtm?.term || '';
+
+    // Auto-resolve numeric Meta IDs from UTM fields
+    if (!campaignId && utmCampaign && /^\d+$/.test(utmCampaign.trim())) {
+      campaignId = utmCampaign.trim();
+    }
+    if (!adSetId && utmTerm && /^\d+$/.test(utmTerm.trim())) {
+      adSetId = utmTerm.trim();
+    }
+    if (!adId && utmContent && /^\d+$/.test(utmContent.trim())) {
+      adId = utmContent.trim();
+    }
+
+    const attributionMethod = (adId || clickId) ? 'fbclid_match' : ((campaignId || adSetId || utmCampaign || utmSource) ? 'utm_match' : 'organic');
+
     // Convert GraphQL format to compatible format for existing backend callers
     order.id = numericId;
 
@@ -260,7 +296,7 @@ export async function syncOrdersFromShopify(shopDomain, shopify_token, startDate
           country
         },
         landingSite: landingSite,
-        referringSite: order.customerJourneySummary?.lastVisit?.referrerUrl || '',
+        referringSite: order.customerJourneySummary?.lastVisit?.referrerUrl || firstVisitData?.referrerUrl || '',
         lineItems: order.lineItems?.edges?.map(edge => {
           const li = edge.node;
           return {
@@ -280,12 +316,13 @@ export async function syncOrdersFromShopify(shopDomain, shopify_token, startDate
           adId,
           adSetId,
           campaignId,
-          attributionMethod: adId ? 'fbclid_match' : (clickId ? 'fbclid_match' : (utmSource ? 'utm_match' : 'organic'))
+          attributionMethod
         },
         customerJourney: {
           daysToConversion: journey?.daysToConversion || 0,
-          momentsCount: journey?.momentsCount || 0,
-          firstVisit
+          momentsCount: (typeof journey?.momentsCount === 'object' ? journey?.momentsCount?.count : journey?.momentsCount) || 0,
+          firstVisit,
+          lastVisit
         }
       },
       { upsert: true, new: true }

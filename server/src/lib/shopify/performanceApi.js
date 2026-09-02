@@ -555,6 +555,19 @@ export async function calculateCatalogPerformance({ shopDomain, shopify_token, s
         }
       }
 
+      const journey = order.customerJourney;
+      const lastVisit = journey?.lastVisit;
+      const firstVisit = journey?.firstVisit;
+      const journeyUtm = (lastVisit?.utmCampaign || lastVisit?.utmSource || lastVisit?.utmContent || lastVisit?.utmTerm) ? lastVisit : firstVisit;
+
+      if (!isMetaAttributed && journeyUtm) {
+        const jSource = (journeyUtm.utmSource || '').toLowerCase();
+        const jRef = (journeyUtm.referringSite || '').toLowerCase();
+        if (['facebook', 'meta', 'instagram', 'fb', 'ig'].includes(jSource) || jRef.includes('facebook.com') || jRef.includes('instagram.com') || journeyUtm.utmCampaign) {
+          isMetaAttributed = true;
+        }
+      }
+
       let orderMatchedActiveAd = false;
 
       order.lineItems.forEach(item => {
@@ -590,6 +603,23 @@ export async function calculateCatalogPerformance({ shopDomain, shopify_token, s
                   if (!orderCampaignId) orderCampaignId = url.searchParams.get('campaign_id') || url.searchParams.get('fb_campaign_id') || '';
                   if (!orderClickId) orderClickId = url.searchParams.get('fbclid') || '';
                 } catch { }
+              }
+
+              // Tier 2 Fallback: customerJourney
+              if (journeyUtm) {
+                if (!utmCampaign) utmCampaign = (journeyUtm.utmCampaign || '').trim();
+                if (!utmContent) utmContent = (journeyUtm.utmContent || '').trim();
+                if (!utmTerm) utmTerm = (journeyUtm.utmTerm || '').trim();
+              }
+
+              if (!orderCampaignId && utmCampaign && /^\d+$/.test(utmCampaign)) {
+                orderCampaignId = utmCampaign;
+              }
+              if (!orderAdSetId && utmTerm && /^\d+$/.test(utmTerm)) {
+                orderAdSetId = utmTerm;
+              }
+              if (!orderAdId && utmContent && /^\d+$/.test(utmContent)) {
+                orderAdId = utmContent;
               }
 
               const normalizeStr = (str) => {
@@ -663,6 +693,22 @@ export async function calculateCatalogPerformance({ shopDomain, shopify_token, s
               } catch { }
             }
 
+            if (journeyUtm) {
+              if (!utmCampaign) utmCampaign = journeyUtm.utmCampaign || '';
+              if (!utmContent) utmContent = journeyUtm.utmContent || '';
+              if (!utmTerm) utmTerm = journeyUtm.utmTerm || '';
+            }
+
+            if (!orderCampaignId && utmCampaign && /^\d+$/.test(utmCampaign)) {
+              orderCampaignId = utmCampaign;
+            }
+            if (!orderAdSetId && utmTerm && /^\d+$/.test(utmTerm)) {
+              orderAdSetId = utmTerm;
+            }
+            if (!orderAdId && utmContent && /^\d+$/.test(utmContent)) {
+              orderAdId = utmContent;
+            }
+
             salesMap[item.productId].matchedOrders.push({
               orderId: order.orderId,
               orderNumber: order.orderNumber || order.name || '',
@@ -671,7 +717,7 @@ export async function calculateCatalogPerformance({ shopDomain, shopify_token, s
               quantity: item.quantity || 0,
               price: item.price || 0,
               totalPrice: (item.price || 0) * (item.quantity || 0),
-              utmSource: order.attribution?.utmSource || '',
+              utmSource: order.attribution?.utmSource || journeyUtm?.utmSource || '',
               utmCampaign: utmCampaign,
               utmContent: utmContent,
               utmTerm: utmTerm,
@@ -859,7 +905,16 @@ export async function calculateCatalogPerformance({ shopDomain, shopify_token, s
   };
 
   validOrders.forEach(o => {
-    const channel = getOrderChannel(o.attribution?.utmSource || '', o.referringSite || '', o.attribution?.clickId || '');
+    const journey = o.customerJourney;
+    const lastVisit = journey?.lastVisit;
+    const firstVisit = journey?.firstVisit;
+    const journeyUtm = (lastVisit?.utmCampaign || lastVisit?.utmSource || lastVisit?.utmContent || lastVisit?.utmTerm) ? lastVisit : firstVisit;
+
+    const utmSource = o.attribution?.utmSource || journeyUtm?.utmSource || '';
+    const referringSite = o.referringSite || journeyUtm?.referringSite || lastVisit?.referringSite || firstVisit?.referringSite || '';
+    const clickId = o.attribution?.clickId || '';
+
+    const channel = getOrderChannel(utmSource, referringSite, clickId);
     channels[channel].orders++;
     channels[channel].revenue += (o.totalPrice || 0);
   });

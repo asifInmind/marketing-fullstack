@@ -91,6 +91,29 @@ export async function calculateAdPerformance({ shopDomain, adId, startDate, endD
       } catch { }
     }
 
+    // Tier 2 Fallback: parsing from customerJourney (lastVisit then firstVisit)
+    const journey = o.customerJourney;
+    const lastVisit = journey?.lastVisit;
+    const firstVisit = journey?.firstVisit;
+    const journeyUtm = (lastVisit?.utmCampaign || lastVisit?.utmSource || lastVisit?.utmContent || lastVisit?.utmTerm) ? lastVisit : firstVisit;
+
+    if (journeyUtm) {
+      if (!orderSource) orderSource = (journeyUtm.utmSource || journeyUtm.referringSite || '').trim();
+      if (!orderCampaignName) orderCampaignName = (journeyUtm.utmCampaign || '').trim();
+      if (!orderContent) orderContent = (journeyUtm.utmContent || '').trim();
+      if (!orderTerm) orderTerm = (journeyUtm.utmTerm || '').trim();
+    }
+
+    if (!orderCampaignId && orderCampaignName && /^\d+$/.test(orderCampaignName)) {
+      orderCampaignId = orderCampaignName;
+    }
+    if (!orderAdSetId && orderTerm && /^\d+$/.test(orderTerm)) {
+      orderAdSetId = orderTerm;
+    }
+    if (!orderAdId && orderContent && /^\d+$/.test(orderContent)) {
+      orderAdId = orderContent;
+    }
+
     const orderContentNorm = normalizeStr(orderContent);
     const orderTermNorm = normalizeStr(orderTerm);
 

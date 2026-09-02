@@ -85,6 +85,15 @@ const ShopifyOrderSchema = new mongoose.Schema({
       utmCampaign: { type: String, default: '' },
       utmContent: { type: String, default: '' },
       utmTerm: { type: String, default: '' }
+    },
+    lastVisit: {
+      landingPage: { type: String, default: '' },
+      referringSite: { type: String, default: '' },
+      utmSource: { type: String, default: '' },
+      utmMedium: { type: String, default: '' },
+      utmCampaign: { type: String, default: '' },
+      utmContent: { type: String, default: '' },
+      utmTerm: { type: String, default: '' }
     }
   },
   sentToMeta: {

@@ -397,7 +397,16 @@ router.get('/channel-orders', async (req, res) => {
     // Filter by channel
     const filteredOrders = dbOrders.filter(o => {
       if (channel === 'Store Total') return true;
-      const orderChan = getOrderChannel(o.attribution?.utmSource || '', o.referringSite || '', o.attribution?.clickId || '');
+      const journey = o.customerJourney;
+      const lastVisit = journey?.lastVisit;
+      const firstVisit = journey?.firstVisit;
+      const journeyUtm = (lastVisit?.utmCampaign || lastVisit?.utmSource || lastVisit?.utmContent || lastVisit?.utmTerm) ? lastVisit : firstVisit;
+
+      const utmSource = o.attribution?.utmSource || journeyUtm?.utmSource || '';
+      const referringSite = o.referringSite || journeyUtm?.referringSite || lastVisit?.referringSite || firstVisit?.referringSite || '';
+      const clickId = o.attribution?.clickId || '';
+
+      const orderChan = getOrderChannel(utmSource, referringSite, clickId);
       return orderChan.toLowerCase() === channel.toLowerCase();
     });
 
@@ -415,17 +424,19 @@ router.get('/channel-orders', async (req, res) => {
     const adIds = new Set();
 
     paginatedOrders.forEach(o => {
-      const attr = o.attribution;
-      if (attr) {
-        if (attr.campaignId) campaignIds.add(attr.campaignId);
-        if (attr.utmCampaign && /^\d+$/.test(attr.utmCampaign)) campaignIds.add(attr.utmCampaign);
+      const attr = o.attribution || {};
+      const journey = o.customerJourney;
+      const lastVisit = journey?.lastVisit;
+      const firstVisit = journey?.firstVisit;
+      const journeyUtm = (lastVisit?.utmCampaign || lastVisit?.utmSource || lastVisit?.utmContent || lastVisit?.utmTerm) ? lastVisit : firstVisit;
 
-        if (attr.adSetId) adSetIds.add(attr.adSetId);
-        if (attr.utmTerm && /^\d+$/.test(attr.utmTerm)) adSetIds.add(attr.utmTerm);
+      const campId = attr.campaignId || (attr.utmCampaign && /^\d+$/.test(attr.utmCampaign) ? attr.utmCampaign : null) || (journeyUtm?.utmCampaign && /^\d+$/.test(journeyUtm.utmCampaign) ? journeyUtm.utmCampaign : null);
+      const asId = attr.adSetId || (attr.utmTerm && /^\d+$/.test(attr.utmTerm) ? attr.utmTerm : null) || (journeyUtm?.utmTerm && /^\d+$/.test(journeyUtm.utmTerm) ? journeyUtm.utmTerm : null);
+      const aId = attr.adId || (attr.utmContent && /^\d+$/.test(attr.utmContent) ? attr.utmContent : null) || (journeyUtm?.utmContent && /^\d+$/.test(journeyUtm.utmContent) ? journeyUtm.utmContent : null);
 
-        if (attr.adId) adIds.add(attr.adId);
-        if (attr.utmContent && /^\d+$/.test(attr.utmContent)) adIds.add(attr.utmContent);
-      }
+      if (campId) campaignIds.add(campId);
+      if (asId) adSetIds.add(asId);
+      if (aId) adIds.add(aId);
     });
 
     const campaignIdArr = Array.from(campaignIds);
@@ -486,9 +497,20 @@ router.get('/channel-orders', async (req, res) => {
 
     const formattedOrders = paginatedOrders.map(o => {
       const attr = o.attribution || {};
-      const orderCampaignId = attr.campaignId || (attr.utmCampaign && /^\d+$/.test(attr.utmCampaign) ? attr.utmCampaign : null);
-      const orderAdSetId = attr.adSetId || (attr.utmTerm && /^\d+$/.test(attr.utmTerm) ? attr.utmTerm : null);
-      const orderAdId = attr.adId || (attr.utmContent && /^\d+$/.test(attr.utmContent) ? attr.utmContent : null);
+      const journey = o.customerJourney;
+      const lastVisit = journey?.lastVisit;
+      const firstVisit = journey?.firstVisit;
+      const journeyUtm = (lastVisit?.utmCampaign || lastVisit?.utmSource || lastVisit?.utmContent || lastVisit?.utmTerm) ? lastVisit : firstVisit;
+
+      const utmCampaign = attr.utmCampaign || journeyUtm?.utmCampaign || '';
+      const utmContent = attr.utmContent || journeyUtm?.utmContent || '';
+      const utmTerm = attr.utmTerm || journeyUtm?.utmTerm || '';
+      const utmSource = attr.utmSource || journeyUtm?.utmSource || '';
+      const utmMedium = attr.utmMedium || journeyUtm?.utmMedium || '';
+
+      const orderCampaignId = attr.campaignId || (utmCampaign && /^\d+$/.test(utmCampaign) ? utmCampaign : null);
+      const orderAdSetId = attr.adSetId || (utmTerm && /^\d+$/.test(utmTerm) ? utmTerm : null);
+      const orderAdId = attr.adId || (utmContent && /^\d+$/.test(utmContent) ? utmContent : null);
 
       const campaignMeta = orderCampaignId ? metadataMapByCampaign.get(orderCampaignId) : null;
       const adSetMeta = orderAdSetId ? metadataMapByAdSet.get(orderAdSetId) : null;
@@ -503,16 +525,16 @@ router.get('/channel-orders', async (req, res) => {
         totalPrice: o.totalPrice,
         currency: o.currency,
         attribution: {
-          utmSource: attr.utmSource || '',
-          utmMedium: attr.utmMedium || '',
-          utmCampaign: attr.utmCampaign || '',
-          utmContent: attr.utmContent || '',
-          utmTerm: attr.utmTerm || '',
+          utmSource,
+          utmMedium,
+          utmCampaign,
+          utmContent,
+          utmTerm,
           clickId: attr.clickId || '',
-          adId: attr.adId || '',
+          adId: orderAdId || '',
           adName: attr.adName || '',
-          campaignId: attr.campaignId || '',
-          adSetId: attr.adSetId || '',
+          campaignId: orderCampaignId || '',
+          adSetId: orderAdSetId || '',
           attributionMethod: attr.attributionMethod || '',
           campaignMeta: campaignMeta ? {
             id: campaignMeta.campaignId,

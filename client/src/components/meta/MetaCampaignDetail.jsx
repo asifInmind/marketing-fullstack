@@ -67,15 +67,32 @@ export function MetaCampaignDetail({
             </CustomAvatar>
 
             <Box sx={{ flex: 1 }}>
-              <Typography variant="h6" sx={{ fontWeight: 700, lineHeight: 1.2, color: "#22303EE6" }}>
-                {campaign.name}
-              </Typography>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                <Typography variant="h6" sx={{ fontWeight: 700, lineHeight: 1.2, color: "#22303EE6" }}>
+                  {campaign.name}
+                </Typography>
+                {(campaign.id || campaign.campaignId) && (
+                  <Chip
+                    label={`ID: ${campaign.id || campaign.campaignId}`}
+                    size="small"
+                    variant="outlined"
+                    sx={{
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      color: '#4B5563',
+                      borderColor: '#D1D5DB',
+                      backgroundColor: '#F3F4F6',
+                      height: 22
+                    }}
+                  />
+                )}
+              </Box>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap', mt: 0.5 }}>
-                <Typography variant="caption" className='text-secondary' >Objective: {campaign.objective}</Typography>
+                <Typography variant="caption" className='text-secondary'>Objective: {campaign.objective || 'N/A'}</Typography>
                 <Typography variant="caption" className='text-secondary'>•</Typography>
-                <Typography variant="caption" className='text-secondary'>Status: {campaign.status}</Typography>
+                <Typography variant="caption" className='text-secondary'>Status: {campaign.status || 'N/A'}</Typography>
                 <Typography variant="caption" className='text-secondary'>•</Typography>
-                <Typography variant="caption" className='text-secondary'>Type: {campaign.type}</Typography>
+                <Typography variant="caption" className='text-secondary'>Type: {campaign.type || 'N/A'}</Typography>
               </Box>
             </Box>
 

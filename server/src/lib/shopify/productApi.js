@@ -1,9 +1,9 @@
 import ShopifyProduct from '../../models/ShopifyProduct.js';
-import { parseLinkHeader } from './shopifyCore.js';
+import { parseLinkHeader, SHOPIFY_API_VERSION } from './shopifyCore.js';
 
 export async function syncProductsFromShopify(shopDomain, shopify_token) {
   let allProducts = [];
-  let nextUrl = new URL(`https://${shopDomain}/admin/api/2024-01/products.json`);
+  let nextUrl = new URL(`https://${shopDomain}/admin/api/${SHOPIFY_API_VERSION}/products.json`);
   nextUrl.searchParams.set('status', 'active');
   nextUrl.searchParams.set('limit', '250');
 
@@ -34,7 +34,7 @@ export async function syncProductsFromShopify(shopDomain, shopify_token) {
     const nextPageInfo = parseLinkHeader(linkHeader);
 
     if (nextPageInfo) {
-      nextUrl = new URL(`https://${shopDomain}/admin/api/2024-01/products.json`);
+      nextUrl = new URL(`https://${shopDomain}/admin/api/${SHOPIFY_API_VERSION}/products.json`);
       nextUrl.searchParams.set('page_info', nextPageInfo);
       nextUrl.searchParams.set('limit', '250');
       pageCount++;

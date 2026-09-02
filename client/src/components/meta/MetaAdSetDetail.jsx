@@ -65,15 +65,32 @@ export function MetaAdSetDetail({
             </CustomAvatar>
 
             <Box sx={{ flex: 1 }}>
-              <Typography variant="h6" sx={{ fontWeight: 700, lineHeight: 1.2, color: "#22303EE6" }}>
-                {adSet.name}
-              </Typography>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                <Typography variant="h6" sx={{ fontWeight: 700, lineHeight: 1.2, color: "#22303EE6" }}>
+                  {adSet.name}
+                </Typography>
+                {(adSet.id || adSet.adSetId) && (
+                  <Chip
+                    label={`ID: ${adSet.id || adSet.adSetId}`}
+                    size="small"
+                    variant="outlined"
+                    sx={{
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      color: '#4B5563',
+                      borderColor: '#D1D5DB',
+                      backgroundColor: '#F3F4F6',
+                      height: 22
+                    }}
+                  />
+                )}
+              </Box>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap', mt: 0.5 }}>
-                <Typography variant="caption" className='text-secondary'>Campaign: {adSet.campaignName}</Typography>
+                <Typography variant="caption" className='text-secondary'>Campaign: {adSet.campaignName || 'N/A'}</Typography>
                 <Typography variant="caption" className='text-secondary'>•</Typography>
-                <Typography variant="caption" className='text-secondary'>Optimization: {adSet.optimizationGoal}</Typography>
+                <Typography variant="caption" className='text-secondary'>Optimization: {adSet.optimizationGoal || 'N/A'}</Typography>
                 <Typography variant="caption" className='text-secondary'>•</Typography>
-                <Typography variant="caption" className='text-secondary'>Status: {adSet.status}</Typography>
+                <Typography variant="caption" className='text-secondary'>Status: {adSet.status || 'N/A'}</Typography>
               </Box>
             </Box>
 

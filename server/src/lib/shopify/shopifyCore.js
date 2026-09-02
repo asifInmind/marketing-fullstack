@@ -1,5 +1,7 @@
 import CacheMarker from '../../models/CacheMarker.js';
 
+export const SHOPIFY_API_VERSION = process.env.SHOPIFY_API_VERSION || '2025-01';
+
 // Helper to safely parse strings to numbers
 export function safeParseInt(val, defaultVal = 0) {
   if (typeof val === 'number') return val;
