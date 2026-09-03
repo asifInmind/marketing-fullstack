@@ -332,42 +332,104 @@ function compileMetaDashboardResponse(dbMeta, dbInsights, dbOrders = []) {
     }
   });
 
-  // Calculate Grand Total Sum of Active & Spending items dynamically using the fully resolved adsList
+  // Calculate Grand Total Sum of Active & Spending items dynamically from active campaigns
   let totalSpend = 0;
   let totalImpressions = 0;
   let totalClicks = 0;
   let totalConversions = 0;
   let totalRevenue = 0;
+
+  Object.values(campaignMap).forEach(camp => {
+    const statusUpper = camp.status?.toUpperCase();
+    const isCampActive = statusUpper === 'ACTIVE' || statusUpper === 'ENABLED';
+    const ci = campaignInsights[camp.id] || { spend: 0, impressions: 0, clicks: 0, conversions: 0, conversion_values: 0 };
+    if (isCampActive && ci.spend > 0) {
+      totalSpend += ci.spend;
+      totalImpressions += ci.impressions;
+      totalClicks += ci.clicks;
+      totalConversions += ci.conversions;
+      totalRevenue += ci.conversion_values;
+    }
+  });
+
+  // Calculate total Shopify conversions and revenue matched across all active campaigns
+  const activeCampaignIds = new Set(Object.values(campaignMap).filter(c => (c.status?.toUpperCase() === 'ACTIVE' || c.status?.toUpperCase() === 'ENABLED')).map(c => c.id));
+  const activeCampaignNames = Object.values(campaignMap).filter(c => (c.status?.toUpperCase() === 'ACTIVE' || c.status?.toUpperCase() === 'ENABLED')).map(c => normalizeStr(c.name)).filter(Boolean);
+  const activeAdIds = new Set(adsList.filter(a => activeCampaignIds.has(a.campaignId)).map(a => a.id));
+  const activeAdNames = adsList.filter(a => activeCampaignIds.has(a.campaignId)).map(a => normalizeStr(a.name)).filter(Boolean);
+  const activeAdSetIds = new Set(Object.values(adSetMap).filter(as => activeCampaignIds.has(as.campaignId)).map(as => as.id));
+  const activeAdSetNames = Object.values(adSetMap).filter(as => activeCampaignIds.has(as.campaignId)).map(as => normalizeStr(as.name)).filter(Boolean);
+
   let totalShopifyConversions = 0;
   let totalShopifyRevenue = 0;
+
+  dbOrders.forEach(o => {
+    if (o.cancelledAt !== null && o.cancelledAt !== undefined) return;
+    let isMatched = false;
+
+    let orderSource = (o.attribution?.utmSource || '').trim();
+    let orderClickId = (o.attribution?.clickId || '').trim();
+    let orderAdId = (o.attribution?.adId || '').trim();
+    let orderAdSetId = (o.attribution?.adSetId || '').trim();
+    let orderCampaignId = (o.attribution?.campaignId || '').trim();
+    let orderCampaignName = (o.attribution?.utmCampaign || '').trim();
+    let orderContent = (o.attribution?.utmContent || '').trim();
+    let orderTerm = (o.attribution?.utmTerm || '').trim();
+
+    if (o.landingSite) {
+      try {
+        const url = new URL(o.landingSite, 'https://fallback.com');
+        if (!orderSource) orderSource = (url.searchParams.get('utm_source') || '').trim();
+        if (!orderClickId) orderClickId = (url.searchParams.get('fbclid') || '').trim();
+        if (!orderCampaignName) orderCampaignName = (url.searchParams.get('utm_campaign') || '').trim();
+        if (!orderContent) orderContent = (url.searchParams.get('utm_content') || '').trim();
+        if (!orderTerm) orderTerm = (url.searchParams.get('utm_term') || '').trim();
+        if (!orderAdId) orderAdId = url.searchParams.get('ad_id') || url.searchParams.get('fb_ad_id') || '';
+        if (!orderAdSetId) orderAdSetId = url.searchParams.get('adset_id') || url.searchParams.get('fbset_id') || '';
+        if (!orderCampaignId) orderCampaignId = url.searchParams.get('campaign_id') || url.searchParams.get('fb_campaign_id') || '';
+      } catch {}
+    }
+
+    const journey = o.customerJourney;
+    const lastVisit = journey?.lastVisit;
+    const firstVisit = journey?.firstVisit;
+    const journeyUtm = (lastVisit?.utmCampaign || lastVisit?.utmSource || lastVisit?.utmContent || lastVisit?.utmTerm) ? lastVisit : firstVisit;
+
+    if (journeyUtm) {
+      if (!orderSource) orderSource = (journeyUtm.utmSource || journeyUtm.referringSite || '').trim();
+      if (!orderCampaignName) orderCampaignName = (journeyUtm.utmCampaign || '').trim();
+      if (!orderContent) orderContent = (journeyUtm.utmContent || '').trim();
+      if (!orderTerm) orderTerm = (journeyUtm.utmTerm || '').trim();
+    }
+
+    if (!orderCampaignId && orderCampaignName && /^\d+$/.test(orderCampaignName)) {
+      orderCampaignId = orderCampaignName;
+    }
+
+    const orderCampaignNorm = normalizeStr(orderCampaignName);
+    const orderContentNorm = normalizeStr(orderContent);
+    const orderTermNorm = normalizeStr(orderTerm);
+
+    if (orderCampaignId && activeCampaignIds.has(orderCampaignId)) isMatched = true;
+    else if (orderCampaignName && activeCampaignIds.has(orderCampaignName.trim())) isMatched = true;
+    else if (orderAdId && activeAdIds.has(orderAdId)) isMatched = true;
+    else if (orderAdSetId && activeAdSetIds.has(orderAdSetId)) isMatched = true;
+    else if (orderContent && activeAdIds.has(orderContent.trim())) isMatched = true;
+    else if (orderTerm && activeAdSetIds.has(orderTerm.trim())) isMatched = true;
+    else if (orderCampaignNorm && activeCampaignNames.some(cn => orderCampaignNorm.includes(cn) || cn.includes(orderCampaignNorm))) isMatched = true;
+    else if (orderContentNorm && activeAdNames.some(an => orderContentNorm.includes(an) || an.includes(orderContentNorm))) isMatched = true;
+    else if (orderTermNorm && activeAdSetNames.some(asn => orderTermNorm.includes(asn) || asn.includes(orderTermNorm))) isMatched = true;
+
+    if (isMatched) {
+      totalShopifyConversions++;
+      totalShopifyRevenue += (o.totalPrice || 0);
+    }
+  });
 
   adsList.forEach(ad => {
     const matched = adOrdersMap[ad.id] || [];
     ad.shopifyConversions = matched.length;
     ad.shopifyRevenue = matched.reduce((sum, o) => sum + (o.totalPrice || 0), 0);
-
-    const statusUpper = ad.status?.toUpperCase();
-    const isAdActive = statusUpper === 'ACTIVE' || statusUpper === 'ENABLED';
-    
-    const adSet = adSetMap[ad.adSetId];
-    const adSetStatusUpper = adSet?.status?.toUpperCase();
-    const isAdSetActive = adSetStatusUpper === 'ACTIVE' || adSetStatusUpper === 'ENABLED';
-    
-    const campaignStatusUpper = ad.campaignStatus?.toUpperCase();
-    const isCampaignActive = campaignStatusUpper === 'ACTIVE' || campaignStatusUpper === 'ENABLED';
-
-    // Only sum active items that have spent budget
-    const insights = adInsights[ad.id] || { spend: 0, impressions: 0, clicks: 0, conversions: 0, conversion_values: 0 };
-    
-    if (isAdActive && isAdSetActive && isCampaignActive && insights.spend > 0) {
-      totalSpend += insights.spend;
-      totalImpressions += insights.impressions;
-      totalClicks += insights.clicks;
-      totalConversions += insights.conversions;
-      totalRevenue += insights.conversion_values;
-      totalShopifyConversions += ad.shopifyConversions;
-      totalShopifyRevenue += ad.shopifyRevenue;
-    }
   });
 
   const avgCTR = totalImpressions > 0 ? (totalClicks / totalImpressions) * 100 : 0;

@@ -163,9 +163,12 @@ export async function calculateAdSetPerformance({ shopDomain, adSetId, startDate
         totalPrice: orderPrice,
         customerInfo: o.customerInfo || {},
         utmSource: o.attribution?.utmSource || '',
-        utmCampaign: orderCampaignName,
-        utmContent: orderContent,
-        utmTerm: orderTerm,
+        utmCampaign: orderCampaignName || o.attribution?.campaignId || o.attribution?.utmCampaign || '',
+        utmContent: orderContent || o.attribution?.adId || o.attribution?.utmContent || '',
+        utmTerm: orderTerm || o.attribution?.adSetId || o.attribution?.utmTerm || '',
+        campaignId: o.attribution?.campaignId || orderCampaignId || '',
+        adSetId: o.attribution?.adSetId || orderAdSetId || '',
+        adId: o.attribution?.adId || orderAdId || '',
         clickId: o.attribution?.clickId || ''
       });
     }

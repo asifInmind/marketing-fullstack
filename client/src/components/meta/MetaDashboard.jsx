@@ -343,16 +343,29 @@ export function MetaDashboard({ accessToken, accountId }) {
     }
   };
 
-  // Override summaries to align 100% with the Shopify Catalog Performance Table totals
+  // Override summaries to align 100% with the active Campaigns Table totals
   const compiledSummaries = useMemo(() => {
+    const activeCampaignsList = (campaigns || []).filter(c => (c.status === 'ACTIVE' || c.status === 'ENABLED') && (c.cost || c.spend || 0) > 0);
+    const tableTotalSpend = activeCampaignsList.reduce((sum, c) => sum + (c.cost || c.spend || 0), 0);
+    const tableTotalImpressions = activeCampaignsList.reduce((sum, c) => sum + (c.impressions || 0), 0);
+    const tableTotalClicks = activeCampaignsList.reduce((sum, c) => sum + (c.clicks || 0), 0);
+    const tableTotalConversions = activeCampaignsList.reduce((sum, c) => sum + (c.conversions || 0), 0);
+    const tableTotalRevenue = activeCampaignsList.reduce((sum, c) => sum + (c.conversionValue || 0), 0);
+    const tableAvgROAS = tableTotalSpend > 0 ? tableTotalRevenue / tableTotalSpend : 0;
+
     const activeMetaShopifyConversions = summary?.totalShopifyConversions !== undefined ? summary.totalShopifyConversions : null;
     const activeMetaShopifyRevenue = summary?.totalShopifyRevenue !== undefined ? summary.totalShopifyRevenue : null;
 
     return {
       summary: {
         ...summary,
-        totalConversions: summary?.totalConversions || 0,
-        totalRevenue: summary?.totalRevenue || 0
+        totalSpend: tableTotalSpend || summary?.totalSpend || 0,
+        totalImpressions: tableTotalImpressions || summary?.totalImpressions || 0,
+        totalClicks: tableTotalClicks || summary?.totalClicks || 0,
+        totalConversions: tableTotalConversions || summary?.totalConversions || 0,
+        totalRevenue: tableTotalRevenue || summary?.totalRevenue || 0,
+        averageROAS: tableAvgROAS || summary?.averageROAS || 0,
+        avgROAS: tableAvgROAS || summary?.avgROAS || 0
       },
       shopifySummary: {
         ...shopifySummary,
@@ -360,7 +373,7 @@ export function MetaDashboard({ accessToken, accountId }) {
         metaRevenue: activeMetaShopifyRevenue !== null ? activeMetaShopifyRevenue : (shopifySummary?.metaRevenue || 0)
       }
     };
-  }, [summary, shopifySummary]);
+  }, [summary, shopifySummary, campaigns]);
 
   // Get the selected campaign data
   const selectedCampaign = selectedCampaignId

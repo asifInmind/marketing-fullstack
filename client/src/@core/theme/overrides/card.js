@@ -21,7 +21,7 @@ const card = skin => {
           '& + .MuiCardContent-root, & + .MuiCardActions-root': {
             paddingBlockStart: 0
           },
-          '& + .MuiCollapse-root .MuiCardContent-root:first-child, & + .MuiCollapse-root .MuiCardActions-root:first-child':
+          '& + .MuiCollapse-root .MuiCardContent-root:first-of-type, & + .MuiCollapse-root .MuiCardActions-root:first-of-type':
             {
               paddingBlockStart: 0
             }
@@ -52,7 +52,7 @@ const card = skin => {
           '& + .MuiCardHeader-root, & + .MuiCardContent-root, & + .MuiCardActions-root': {
             paddingBlockStart: 0
           },
-          '& + .MuiCollapse-root .MuiCardHeader-root:first-child, & + .MuiCollapse-root .MuiCardContent-root:first-child, & + .MuiCollapse-root .MuiCardActions-root:first-child':
+          '& + .MuiCollapse-root .MuiCardHeader-root:first-of-type, & + .MuiCollapse-root .MuiCardContent-root:first-of-type, & + .MuiCollapse-root .MuiCardActions-root:first-of-type':
             {
               paddingBlockStart: 0
             }
@@ -75,7 +75,7 @@ const card = skin => {
           '& + .MuiCardHeader-root, & + .MuiCardContent-root, & + .MuiCardActions-root': {
             paddingBlockStart: 0
           },
-          '& + .MuiCollapse-root .MuiCardHeader-root:first-child, & + .MuiCollapse-root .MuiCardContent-root:first-child, & + .MuiCollapse-root .MuiCardActions-root:first-child':
+          '& + .MuiCollapse-root .MuiCardHeader-root:first-of-type, & + .MuiCollapse-root .MuiCardContent-root:first-of-type, & + .MuiCollapse-root .MuiCardActions-root:first-of-type':
             {
               paddingBlockStart: 0
             }
